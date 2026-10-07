@@ -10,6 +10,9 @@ Sous-commandes :
   image   IMAGE.st SORTIE.bin      programme du jeu relogé à $10100 (TEXT+DATA brut, pour dasm)
   tracks  IMAGE.st SORTIE.json     décode les 8 circuits (géométrie complète) en JSON
   preview IMAGE.st SORTIE.png      dessine les 8 circuits vus de dessus (nécessite Pillow)
+  falcon  IMAGE.st DOSSIER         version Falcon030 : dossier pour disque dur (DOSSIER/SCR/)
+                                   et disquette DOSSIER/SCR_F030.ST (voir falcon/LISEZMOI.txt)
+  mkst    DOSSIER SORTIE.st        image disquette FAT12 (720 Ko) avec le contenu d'un dossier
 
 Aucune donnée du jeu n'est incluse dans ce dépôt : tout est lu depuis votre propre image disque.
 """
@@ -344,6 +347,185 @@ def all_tracks(img):
     m = Mem(game_program(img))
     return [build_track(m, i) for i in range(8)]
 
+
+# --------------------------------------------------------------------------- écriture FAT12 (.st)
+
+def _dos_name(name):
+    base, _, ext = name.upper().partition('.')
+    if not base or len(base) > 8 or len(ext) > 3:
+        raise ValueError('nom de fichier non 8.3 : ' + name)
+    return base.ljust(8).encode('latin1') + ext.ljust(3).encode('latin1')
+
+
+def fat12_image(files, tracks=80, sides=2, spt=9, spc=2, label=None):
+    """Image disquette FAT12 lisible par TOS/EmuTOS. `files` : liste ordonnée de
+    (chemin, octets) ; « AUTO/X.PRG » crée le dossier AUTO. L'ordre des entrées de
+    répertoire est celui de la liste (le TOS lance le dossier AUTO dans cet ordre)."""
+    bps, res, nfat, ndir, media = 512, 1, 2, 112, 0xF9
+    nsec = tracks * sides * spt
+    csize = spc * bps
+    rootsec = ndir * 32 // bps
+    spf = 1
+    while True:                                # taille de FAT suffisante pour tous les clusters
+        nclus = (nsec - res - nfat * spf - rootsec) // spc
+        if (nclus + 2) * 3 // 2 <= spf * bps:
+            break
+        spf += 1
+    tree = {'': []}                            # dossier -> [(nom, octets | None pour un dossier)]
+    for path, data in files:
+        parts = path.split('/')
+        for i in range(1, len(parts)):
+            d = '/'.join(parts[:i])
+            if d not in tree:
+                tree[d] = []
+                tree['/'.join(parts[:i - 1])].append((parts[i - 1], None))
+        tree['/'.join(parts[:-1])].append((parts[-1], data))
+    fat = [0xFF9, 0xFFF] + [0] * nclus
+    clusters = {}
+    nxt = [2]
+
+    def alloc(size):
+        n = max(1, -(-size // csize))
+        first = nxt[0]
+        if first + n > nclus + 2:
+            raise ValueError('disquette pleine')
+        for c in range(first, first + n):
+            fat[c] = c + 1 if c < first + n - 1 else 0xFFF
+        nxt[0] += n
+        return first, n
+
+    dirclus = {}
+    for d in sorted(k for k in tree if k):     # dossiers d'abord (taille connue)
+        dirclus[d] = alloc((len(tree[d]) + 2) * 32)
+    for d, ents in tree.items():
+        for name, data in ents:
+            if data is not None:
+                clusters[(d, name)] = alloc(len(data))[0] if data else 0
+
+    img = bytearray(nsec * bps)
+    data0 = res + nfat * spf + rootsec
+
+    def entry(name, attr, cl, size):
+        e = bytearray(32)
+        e[0:11] = name if isinstance(name, bytes) else _dos_name(name)
+        e[11] = attr
+        e[22:26] = struct.pack('<HH', 0, (9 << 9) | (1 << 5) | 1)   # 01/01/1989
+        e[26:32] = struct.pack('<HI', cl, size)
+        return bytes(e)
+
+    def dirdata(d):
+        out = bytearray()
+        if d:
+            parent = '/'.join(d.split('/')[:-1])
+            out += entry(b'.          ', 0x10, dirclus[d][0], 0)
+            out += entry(b'..         ', 0x10, dirclus[parent][0] if parent else 0, 0)
+        elif label:
+            out += entry(label.upper().ljust(11)[:11].encode('latin1'), 0x08, 0, 0)
+        for name, data in tree[d]:
+            sub = (d + '/' + name) if d else name
+            if data is None:
+                out += entry(name, 0x10, dirclus[sub][0], 0)
+            else:
+                out += entry(name, 0x00, clusters[(d, name)], len(data))
+        return out
+
+    root = dirdata('')
+    if len(root) > ndir * 32:
+        raise ValueError('trop de fichiers à la racine')
+    img[(res + nfat * spf) * bps:(res + nfat * spf) * bps + len(root)] = root
+
+    def put(cl, data):
+        o = (data0 + (cl - 2) * spc) * bps
+        img[o:o + len(data)] = data
+
+    for d in dirclus:
+        put(dirclus[d][0], dirdata(d))
+    for (d, name), cl in clusters.items():
+        if cl:
+            put(cl, dict(tree[d])[name])
+    fatb = bytearray(spf * bps)
+    for n in range(0, len(fat) - 1, 2):
+        v = fat[n] | fat[n + 1] << 12
+        fatb[n * 3 // 2:n * 3 // 2 + 3] = v.to_bytes(3, 'little')
+    if len(fat) % 2:
+        n = len(fat) - 1
+        fatb[n * 3 // 2:n * 3 // 2 + 2] = fat[n].to_bytes(2, 'little')
+    fatb[0] = media
+    for i in range(nfat):
+        o = (res + i * spf) * bps
+        img[o:o + len(fatb)] = fatb
+    boot = bytearray(512)
+    boot[0:2] = b'\x60\x38'
+    boot[2:8] = b'SCRF30'
+    boot[8:11] = b'\x19\x89\x30'               # numéro de série
+    boot[11:30] = struct.pack('<HBHBHHBHHHH', bps, spc, res, nfat, ndir, nsec, media, spf, spt, sides, 0)
+    if sum(struct.unpack('>256H', boot)) & 0xFFFF == 0x1234:   # jamais « amorçable »
+        boot[510] ^= 1
+    img[0:512] = boot
+    return bytes(img)
+
+
+def fat12_best_fit(files, label=None):
+    """Essaie 9 secteurs/piste avec clusters de 1 Ko, puis de 512 o., puis 10 secteurs/piste."""
+    err = None
+    for spt, spc in ((9, 2), (9, 1), (10, 1)):
+        try:
+            return fat12_image(files, spt=spt, spc=spc, label=label), spt
+        except ValueError as e:
+            err = e
+    raise err
+
+
+# --------------------------------------------------------------------------- version Falcon030
+
+FALCON_INF = (b'\r\n'
+              b'; SCRF030.INF - options de SCRF030.PRG sur la PREMIERE ligne (vide : rien)\r\n'
+              b';   8 = 8 MHz et bus STE    C = caches du 68030 laisses    N = pas de correction 60 Hz\r\n')
+
+
+def falcon_bin(name):
+    import os
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'falcon', 'bin', name)
+    return open(p, 'rb').read()
+
+
+def falcon_kit(img, outdir):
+    """Prépare la version Falcon030 à partir de l'image .st d'origine."""
+    import os
+    files = fat_list(img)
+    if not any(k.upper().endswith('GAME.PUT') for k in files):
+        raise ValueError('GAME.PUT introuvable sur cette disquette')
+    try:                                       # contrôle : décompression et version
+        prg = game_program(img)
+        known = prg[0x13498 - TEXT_BASE + 0x1C:][:11] == b'LITTLE RAMP'
+    except (ValueError, IndexError, StopIteration, struct.error):
+        known = False
+    if not known:                              # le lanceur ne dépend pas de la version
+        print('attention : GAME.PUT n\'est pas la version étudiée (docs/RETRO_INGENIERIE.md) ;'
+              ' la version Falcon est préparée quand même')
+    launcher, auto = falcon_bin('SCRF030.PRG'), falcon_bin('F030AUTO.PRG')
+    game_key = next(k for k in files if k.upper().endswith('GAME.PUT'))
+
+    # 1. dossier pour disque dur : le jeu + le lanceur
+    hd = os.path.join(outdir, 'SCR')
+    os.makedirs(hd, exist_ok=True)
+    keep = [game_key] + [k for k in files if k.upper().split('/')[-1] == 'HIGHSCOR.ES']
+    for k in keep:
+        open(os.path.join(hd, k.split('/')[-1].upper()), 'wb').write(files[k])
+    open(os.path.join(hd, 'SCRF030.PRG'), 'wb').write(launcher)
+    open(os.path.join(hd, 'SCRF030.INF'), 'wb').write(FALCON_INF)
+
+    # 2. disquette : tout le contenu d'origine, F030AUTO.PRG en tête du dossier AUTO
+    #    (exécuté avant le menu DEBUT.PRG), SCRF030.PRG à la racine, BPB standard
+    ordered = [('AUTO/F030AUTO.PRG', auto)]
+    ordered += [(k, v) for k, v in files.items()]
+    ordered += [('SCRF030.PRG', launcher), ('SCRF030.INF', FALCON_INF)]
+    st, spt = fat12_best_fit(ordered)
+    stpath = os.path.join(outdir, 'SCR_F030.ST')
+    open(stpath, 'wb').write(st)
+    print('disque dur :', hd, '(lancer SCRF030.PRG)')
+    print('disquette  :', stpath, '(%d secteurs/piste ; démarrer dessus)' % spt)
+
 # --------------------------------------------------------------------------- CLI
 
 def main(argv):
@@ -351,6 +533,18 @@ def main(argv):
         print(__doc__)
         return 1
     cmd, src = argv[1], argv[2]
+    if cmd == 'mkst':
+        import os
+        files = []
+        for dp, dns, fns in os.walk(src):
+            dns.sort()
+            for f in sorted(fns):
+                full = os.path.join(dp, f)
+                files.append((os.path.relpath(full, src).replace(os.sep, '/'), open(full, 'rb').read()))
+        st, spt = fat12_best_fit(files)
+        open(argv[3], 'wb').write(st)
+        print('%s : %d fichiers, %d secteurs/piste' % (argv[3], len(files), spt))
+        return 0
     data = open(src, 'rb').read()
     if cmd == 'ls':
         for k, v in fat_list(data).items():
@@ -376,6 +570,8 @@ def main(argv):
         print('8 circuits écrits dans', argv[3])
     elif cmd == 'preview':
         preview(all_tracks(data), argv[3])
+    elif cmd == 'falcon':
+        falcon_kit(data, argv[3])
     else:
         print(__doc__)
         return 1

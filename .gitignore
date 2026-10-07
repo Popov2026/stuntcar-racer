@@ -14,3 +14,7 @@ tools/dasm
 tracks.json
 out/
 native/build*/
+# version Falcon : lanceurs fournis, sorties de test non suivies
+!falcon/bin/*.PRG
+falcon/test/build/
+__pycache__/

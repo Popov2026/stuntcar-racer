@@ -15,7 +15,8 @@ version **Atari ST**, et réplique jouable sur PC dont tous les réglages sont m
 | `replica/` | la réplique (HTML5 / JavaScript, sans dépendance) |
 | `tools/` | outils de rétro-ingénierie : extraction, décompression, décodage des circuits, émulateur ST de test, désassembleur |
 | `docs/RETRO_INGENIERIE.md` | formats, adresses, routines décompilées, méthode de vérification |
-| `docs/FALCON030.md` | pistes pour une version Falcon030 : ce qui sert, points d'attention 68030, idées (VIDEL, DSP) |
+| `falcon/` | **version Falcon030** : lanceur `SCRF030.PRG` (le jeu d'origine en mode ST compatible, caches, VBL 60 Hz, `move sr`), disquette Falcon, tests sous Hatari |
+| `docs/FALCON030.md` | version Falcon030 : ce qui est traité, résultats des tests Hatari, pistes (VIDEL, DSP) |
 
 ## Deux moteurs
 
@@ -92,6 +93,18 @@ Réglages dans `scr.ini` (modèle : `native/scr.ini.example`) ou en ligne de com
 `--gravity --thrust --brake --timestep --damping --boostuse --shock` (facteurs, 1 = jeu
 d'origine), `--scale`, `--fullscreen`, `--smooth`, `--speed`.
 
+## Version Falcon030
+
+```sh
+python3 tools/scr_tool.py falcon disque.st falcon_out   # falcon_out/SCR/ (disque dur) et falcon_out/SCR_F030.ST
+make -C falcon VASM=vasmm68k_mot                        # reconstruire le lanceur (déjà fourni dans falcon/bin/)
+HATARI=hatari TOS=etos512us.img falcon/test/run_tests.sh          # tests sous Hatari, sans données du jeu
+HATARI=hatari TOS=etos512us.img falcon/test/game_test.sh disque.st sortie   # le vrai jeu
+```
+
+Sur le Falcon : `SCRF030.PRG` à côté de `GAME.PUT`, ou démarrer sur `SCR_F030.ST`.
+Détails : `falcon/LISEZMOI.txt` et `docs/FALCON030.md`.
+
 ## Lancer la réplique (navigateur)
 
 1. Ouvrir `replica/index.html` dans un navigateur récent (double-clic suffit).
@@ -123,6 +136,8 @@ python3 scr_tool.py game    disque.st jeu.prg      # programme du jeu décompres
 python3 scr_tool.py image   disque.st jeu.bin      # le même, relogé à $10100 (comme en mémoire)
 python3 scr_tool.py tracks  disque.st tracks.json  # les 8 circuits (géométrie complète)
 python3 scr_tool.py preview disque.st circuits.png # vue de dessus (Pillow)
+python3 scr_tool.py falcon  disque.st falcon_out/  # version Falcon030 (dossier disque dur + disquette)
+python3 scr_tool.py mkst    dossier/ disque.st     # disquette FAT12 720 Ko à partir d'un dossier
 
 ./build_stemu.sh                                    # compile l'émulateur de test + désassembleur
 ./stemu_script.py scenarios/practice_little_ramp.txt --disk disque.st --dir fichiers/ \

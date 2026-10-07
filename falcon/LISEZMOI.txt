@@ -1,0 +1,78 @@
+Stunt Car Racer (Atari ST, Geoff Crammond / Micro Style 1989) - version Falcon030
+
+Aucune donnée du jeu n'est fournie : il faut votre propre image disque .st.
+Le jeu d'origine (GAME.PUT) est exécuté tel quel par le 68030 ; SCRF030.PRG prépare
+le Falcon pour qu'il s'y comporte comme un Atari ST.
+
+
+1. Préparer les fichiers (sur PC, Python 3)
+
+    python3 tools/scr_tool.py falcon Stunt_Car_Racer.st falcon_out
+
+  produit :
+    falcon_out/SCR/          pour le disque dur : GAME.PUT, HIGHSCOR.ES, SCRF030.PRG, SCRF030.INF
+    falcon_out/SCR_F030.ST   disquette Falcon : tout le contenu de la disquette d'origine,
+                             AUTO\F030AUTO.PRG placé avant le menu AUTO\DEBUT.PRG,
+                             SCRF030.PRG à la racine, secteur de démarrage (BPB) standard
+
+  On peut aussi copier à la main GAME.PUT (de la disquette d'origine) et
+  falcon/bin/SCRF030.PRG dans un même dossier.
+
+
+2. Lancer
+
+  Disque dur : double-clic sur SCRF030.PRG (moniteur couleur : RVB, TV ou VGA).
+  Disquette  : démarrer le Falcon sur SCR_F030.ST, puis choisir STUNTCAR dans le menu.
+
+  SCRF030.PRG :
+    - passe en « ST basse » 320x200 16 couleurs (mode compatible du VIDEL), sur un écran
+      à lui ; le mode, l'écran et les palettes sont rétablis au retour ;
+    - coupe les caches du 68030 (le jeu est décompressé puis relogé avant d'être
+      exécuté : avec le cache d'instructions, le 68030 exécuterait d'anciennes données) ;
+    - déplace la table des vecteurs (registre VBR) vers une table de relais qui renvoie
+      chaque exception au vecteur écrit par le jeu en mémoire basse ($70, $118...), ce qui
+      permet :
+        * à 60 Hz (VGA, RVB/TV en NTSC) de ne transmettre que 5 VBL sur 6 : la logique,
+          le chronomètre et le son du moteur, réglés sur la VBL, gardent la cadence de 50 Hz
+          de l'Atari ST (la fréquence est mesurée au lancement) ;
+        * d'émuler « move sr,Dn » et « move sr,-(a7) » en mode utilisateur (instruction
+          privilégiée sur 68030, autorisée sur 68000) ;
+        * de donner à l'octet $FF (que lit la physique du jeu, et qui dépend du TOS) la
+          valeur voulue, $FF ;
+    - dirige le son du YM2149 vers le codec du Falcon.
+  F030AUTO.PRG fait la même chose depuis le dossier AUTO et reste résident.
+
+
+3. Options
+
+  Touches enfoncées au lancement, ou lettres sur la première ligne de SCRF030.INF,
+  ou ligne de commande :
+    Shift      / 8   8 MHz et bus STE (au plus près d'un ST)
+    Control    / C   laisser les caches du 68030 tels que le TOS les a mis (déconseillé)
+    Alternate  / N   pas de correction 60 Hz
+
+
+4. Tester sous Hatari (Linux, macOS)
+
+  Il faut Hatari (testé : 2.6.1), une ROM EmuTOS 512 Ko (etos512*.img, libre) ou
+  TOS 4.0x, vasm (assembleur 68000, syntaxe Motorola) et Python 3.
+
+    make -C falcon VASM=vasmm68k_mot           # SCRF030.PRG, F030AUTO.PRG, doublures de test
+    HATARI=hatari TOS=etos512us.img falcon/test/run_tests.sh
+
+  run_tests.sh remplace le jeu par une « doublure » (falcon/test/standin.s) qui fait avec
+  la machine ce que fait le jeu (mode utilisateur puis Super, VBL $70, clavier $118,
+  double tampon par $FF8201/03, palette, YM2149, code modifié puis exécuté, move sr) et
+  rend compte de ce qu'elle observe ; les résultats sont comparés aux valeurs attendues
+  (VGA, RVB, TV, NTSC 60 Hz, 8 MHz, caches émulés, clavier, démarrage sur disquette).
+
+  Avec votre disquette, le vrai jeu :
+
+    HATARI=hatari TOS=etos512us.img falcon/test/game_test.sh Stunt_Car_Racer.st sortie hd vga
+
+  (captures toutes les 5 s, planche dans sortie/planche.png ; « floppy » au lieu de « hd »
+  pour démarrer sur la disquette Falcon ; hatari_falcon.sh -w pour jouer dans une fenêtre).
+
+  Remarque : en ST basse sur VGA, Hatari calcule mal la fréquence du VIDEL et tourne à
+  50 Hz au lieu de 60 ; SCRF030 mesure la fréquence, il ne corrige donc rien dans ce cas.
+  La correction 60 Hz se teste en RVB NTSC (option -n de hatari_falcon.sh).
