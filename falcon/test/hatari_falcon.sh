@@ -10,11 +10,13 @@
 #   -m MONITEUR vga | rgb | tv                                         [vga]
 #   -v N        nombre de VBL émulées avant de quitter                 [3000]
 #   -s N        capture d'écran à la VBL N (option répétable)
-#   -k N:CODE   appui sur la touche CODE (code clavier ST, décimal : 57 = espace,
-#               28 = Entrée, 59 = F1) vers la VBL N (option répétable, N croissants)
+#   -k N:CODE   touche CODE (code clavier ST, décimal : 57 = espace, 28 = Entrée,
+#               3 = « 2 ») enfoncée à la VBL N et relâchée à N+25 (option répétable,
+#               N croissants et espacés d'au moins 26 VBL)
 #   -n          NVRAM réglée en NTSC (60 Hz) : moniteur RVB/TV à 60 Hz
 #   -x          CPU « cycle exact » : caches du 68030 émulés
-#   -w          fenêtre visible, vitesse réelle, son (sinon : sans affichage, accéléré)
+#   -w          fenêtre visible, vitesse réelle, son, joystick = flèches + Ctrl droit
+#               (sinon : sans affichage, accéléré)
 #
 # Résultats dans SORTIE : console.txt (sortie de Hatari, dont les messages NatFeats
 # de la doublure), vblN.png (captures).
@@ -62,13 +64,18 @@ for n in $SHOTS; do
 	echo "screenshot $OUT/vbl$n.png" > "$OUT/shot$n.ini"
 	echo "b VBL = $n :once :trace :quiet :file $OUT/shot$n.ini" >> "$OUT/breakpoints.ini"
 done
-# touches : à la VBL N, le débogueur crée un fichier témoin ; ce script envoie alors
-# l'événement clavier par la FIFO de commandes de Hatari (quelques VBL de décalage)
+# touches : enfoncée à la VBL N, relâchée à N+25 (une demi-seconde : certains programmes,
+# comme le menu de la compilation, lisent le registre de l'ACIA par scrutation et
+# manqueraient un appui trop bref). À chaque repère, le débogueur crée un fichier témoin ;
+# ce script envoie alors l'événement par la FIFO de commandes de Hatari (quelques VBL de
+# décalage). Code en hexadécimal : Hatari lit « 3 » comme le caractère 3, pas le code 3.
 for k in $KEYS; do
 	n=${k%%:*}
-	rm -f "$OUT/.key$n.png"
-	echo "screenshot $OUT/.key$n.png" > "$OUT/key$n.ini"
-	echo "b VBL = $n :once :trace :quiet :file $OUT/key$n.ini" >> "$OUT/breakpoints.ini"
+	for m in $n $((n + 25)); do
+		rm -f "$OUT/.key$m.png"
+		echo "screenshot $OUT/.key$m.png" > "$OUT/key$m.ini"
+		echo "b VBL = $m :once :trace :quiet :file $OUT/key$m.ini" >> "$OUT/breakpoints.ini"
+	done
 done
 
 set -- --configfile /dev/null --machine falcon --cpulevel 3 --cpuclock 16 \
@@ -86,7 +93,7 @@ if [ -n "$KEYS" ]; then
 	set -- "$@" --cmd-fifo "$OUT/cmd.fifo"
 fi
 if [ $WINDOW = 1 ]; then
-	set -- "$@" --sound 44100
+	set -- "$@" --sound 44100 --joystick 1
 else
 	set -- "$@" --sound off --fast-forward on
 	export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
@@ -102,11 +109,15 @@ fi
 cd "$OUT"
 HOME="$OUT" "$HATARI" "$@" < /dev/null > console.txt 2>&1 &
 HPID=$!
+sendkey() {	# sendkey VBL ÉVÉNEMENT
+	while [ ! -s "$OUT/.key$1.png" ] && kill -0 $HPID 2>/dev/null; do sleep 0.01; done
+	[ -p "$OUT/cmd.fifo" ] && kill -0 $HPID 2>/dev/null && echo "hatari-event $2" > "$OUT/cmd.fifo"
+	return 0
+}
 for k in $KEYS; do
-	n=${k%%:*}
-	while [ ! -s "$OUT/.key$n.png" ] && kill -0 $HPID 2>/dev/null; do sleep 0.01; done
-	[ -p "$OUT/cmd.fifo" ] && kill -0 $HPID 2>/dev/null &&
-		echo "hatari-event keypress ${k#*:}" > "$OUT/cmd.fifo"
+	n=${k%%:*}; c=$(printf '0x%x' "${k#*:}")
+	sendkey "$n" "keydown $c"
+	sendkey $((n + 25)) "keyup $c"
 done
 wait $HPID || { echo "Hatari a échoué, voir $OUT/console.txt"; exit 1; }
 grep -a "STANDIN" console.txt || true

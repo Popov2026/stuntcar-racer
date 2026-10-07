@@ -10,6 +10,7 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 | Problème ST → Falcon | Traitement par SCRF030 |
 |---|---|
 | Le jeu suppose la basse résolution ST (320×200, 16 couleurs, plans entrelacés, base vidéo `$FF8201/03`, palette `$FF8240`) | mode compatible du VIDEL (`Setscreen` mode 3, `STMODES\|BPS4`, lignes doublées en VGA) sur un écran à nous, aligné sur 256 octets, en ST-RAM ; mode, écran et palettes (ST et VIDEL) rétablis |
+| Le chargeur JEK de `GAME.PUT` recopie sa dernière routine à **écran + `$7F00`** (sur un ST, l'écran est au sommet de la RAM : cette zone est libre jusqu'à la fin de la mémoire). Avec un écran de 32 000 octets ailleurs, la routine écrase `GAME.PUT` pendant qu'il est recopié (exception « Line F » à `text+$9A`) ; avec l'écran d'EmuTOS en haut des 14 Mo (`$DF8200`), elle sortirait de la RAM | écran de **32 Ko** (`$8000`) dans la BSS du lanceur, comme le haut de la RAM d'un ST, y compris pour `F030AUTO.PRG` (résident) |
 | Code décompressé (JEK/ByteKiller) puis relogé avant exécution, code issu du 6502 | caches d'instructions et de données coupés (`CACR = $0808`) |
 | Logique, chrono et son moteur cadencés par la VBL (8,33 ticks/s à 50 Hz) : 20 % trop rapides à 60 Hz | table des vecteurs déplacée (`VBR`) vers des relais `move.l (n*4).w,-(sp) ; rts` ; à 60 Hz, le relais de la VBL ne transmet que 5 VBL sur 6. La fréquence est **mesurée** (horloge 200 Hz) |
 | `move sr,<ea>` privilégiée sur 68010+ | violation de privilège : `move sr,Dn` et `move sr,-(a7)` émulés en mode utilisateur, sinon renvoi au vecteur du TOS |
@@ -38,9 +39,23 @@ données du jeu. Résultats (Hatari 2.6.1, EmuTOS de septembre 2026) :
 | disquette | `scr_tool.py falcon` sur une fausse disquette au BPB d'origine ; démarrage : `AUTO\F030AUTO.PRG` → menu → `GAME.PUT` |
 | retour | VBR = 0, `CACR = $3111`, octet `$FF`, mode 640×480 du bureau : rétablis |
 
-Le vrai jeu se teste avec votre disquette : `falcon/test/game_test.sh disque.st sortie`
-(démarrage, Espace sur l'écran titre, captures toutes les 5 s). **Ni le jeu lui-même, ni un
-vrai Falcon n'ont pu être essayés ici** (pas de données du jeu dans ce dépôt).
+### Le vrai jeu
+
+`falcon/test/game_test.sh disque.st sortie [hd|floppy] [vga|rgb|tv]` : version Falcon
+préparée depuis la disquette, puis menus traversés au clavier jusqu'à une course (Espace,
+nom « AB », Entrée, *Start the Racing Season*, vue d'ensemble, départ), captures toutes
+les 6 s. Essayé avec la disquette « Compact Disk 2.1 » (`Stunt_Car_Racer_1989Micro_Styleb2.st`) :
+
+| Lancement | Résultat |
+|---|---|
+| disque dur, `SCRF030.PRG`, VGA | décompactage JEK, écran du cracker, titre, générique, menus, nom, pilotes, division 4, course 3 sur Little Ramp : vue d'ensemble, grue (« DROP START »), adversaire qui part, chronomètre qui tourne |
+| disque dur, RVB | idem |
+| disquette `SCR_F030.ST`, VGA | `AUTO\F030AUTO.PRG`, menu de la compilation (touche 2), puis idem |
+
+Le premier essai a révélé le problème du chargeur JEK (écran + `$7F00`, voir le tableau),
+corrigé depuis. Le pilotage se fait au joystick, que les scripts ne savent pas injecter :
+`hatari_falcon.sh -w` ouvre une fenêtre avec le joystick sur les flèches et Ctrl droit.
+Rien n'a été essayé sur un vrai Falcon.
 
 Particularité de Hatari : en ST basse sur VGA, la fréquence du VIDEL est mal calculée
 (480 Hz, ramenés à 50) ; un vrai Falcon est à 60 Hz. SCRF030 mesurant la fréquence, il est

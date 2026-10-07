@@ -5,7 +5,8 @@
 ; d'origine GAME.PUT, sans le modifier :
 ;
 ;  * mode vidéo VIDEL « ST basse » 320x200 16 couleurs (RVB, TV ou VGA),
-;    sur un écran à nous (Mxalloc en ST-RAM), mode et palettes rétablis au retour ;
+;    sur un écran à nous de 32 Ko (comme en haut de la RAM d'un ST : le chargeur
+;    JEK de GAME.PUT se sert de écran+$7F00), mode et palettes rétablis au retour ;
 ;  * caches du 68030 coupés : le jeu est décompressé puis relogé en mémoire
 ;    avant d'être exécuté (et le code issu du 6502 peut se modifier lui-même) ;
 ;  * table des vecteurs déplacée (VBR du 68030) vers une table de relais qui
@@ -52,6 +53,7 @@ BPS4		equ	2
 MODE_STLOW	equ	STMODES|BPS4		; 40 colonnes, 16 couleurs
 
 SCREEN_BYTES	equ	32000
+SCREEN_AREA	equ	$8000			; écran + marge, comme en haut de la RAM d'un ST
 
 	text
 
@@ -301,36 +303,18 @@ set_video:
 	or.w	d0,d1
 .mode:	move.w	d1,new_mode
 
-	ifne	AUTO
-	clr.l	d0				; AUTO : TOS réalloue la mémoire écran
-	clr.l	d1
-	else
-	clr.w	-(sp)				; ST-RAM uniquement (le VIDEL n'affiche que la ST-RAM)
-	move.l	#SCREEN_BYTES+256,-(sp)
-	move.w	#$44,-(sp)			; Mxalloc
-	trap	#1
-	addq.l	#8,sp
-	tst.l	d0
-	bgt.s	.gotmem
-	move.l	#SCREEN_BYTES+256,-(sp)
-	move.w	#$48,-(sp)			; Malloc (TOS sans Mxalloc)
-	trap	#1
-	addq.l	#6,sp
-	tst.l	d0
-	bgt.s	.gotmem
-	moveq	#-1,d0
-	rts
-.gotmem:
-	move.l	d0,screen_block
-	add.l	#255,d0
-	and.l	#$ffffff00,d0			; aligné sur 256 (registres $FF8201/03)
+; écran dans notre BSS (ST-RAM : programme chargé en ST-RAM), aligné sur 256 octets
+; ($FF8201/03), suivi d'une marge pour atteindre 32 Ko : sur un ST, l'écran est en haut
+; de la mémoire et le chargeur JEK de GAME.PUT recopie sa dernière routine à
+; écran+$7F00, entre la fin de l'écran et le sommet de la RAM.
+	move.l	#screen_mem+255,d0
+	and.l	#$ffffff00,d0
 	move.l	d0,screen
 	move.l	d0,a0				; écran noir
 	move.w	#SCREEN_BYTES/4-1,d1
 .clr:	clr.l	(a0)+
 	dbf	d1,.clr
 	move.l	d0,d1
-	endc
 
 	move.w	new_mode,-(sp)
 	move.w	#3,-(sp)
@@ -360,10 +344,6 @@ restore_video:
 	pea	restore_palettes(pc)
 	move.w	#38,-(sp)
 	trap	#14
-	addq.l	#6,sp
-	move.l	screen_block,-(sp)
-	move.w	#$49,-(sp)			; Mfree
-	trap	#1
 	addq.l	#6,sp
 	rts
 	endc
@@ -684,7 +664,6 @@ old_mode:	ds.w	1
 new_mode:	ds.w	1
 old_phys:	ds.l	1
 old_log:	ds.l	1
-screen_block:	ds.l	1
 screen:		ds.l	1
 exec_result:	ds.l	1
 old_vbl_m:	ds.l	1
@@ -709,3 +688,4 @@ vectab:		ds.l	256			; nouvelle table (VBR), alignée sur 4
 relays:		ds.w	3*256
 		ds.l	512
 stack_top:	ds.l	1
+screen_mem:	ds.b	SCREEN_AREA+256

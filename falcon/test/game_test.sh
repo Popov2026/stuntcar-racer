@@ -4,10 +4,12 @@
 # usage : HATARI=... TOS=... ./game_test.sh DISQUETTE.st SORTIE [hd|floppy] [vga|rgb|tv]
 #
 # Prépare la version Falcon (tools/scr_tool.py falcon), démarre le jeu depuis le disque
-# dur (C:\SCR\SCRF030.PRG, par défaut) ou depuis la disquette Falcon produite, appuie sur
-# Espace pour passer l'écran titre, et fait une capture toutes les 250 VBL (5 s) pendant
-# 90 s. Planche des captures : SORTIE/planche.png (Pillow). Pour jouer : ajouter -w dans
-# la commande hatari_falcon.sh affichée.
+# dur (SCRF030.PRG lancé automatiquement, par défaut) ou depuis la disquette Falcon
+# produite (menu de la compilation : touche 2), puis traverse les menus au clavier
+# jusqu'à une course : Espace (écran du cracker, titre, Single Player League), nom « AB »,
+# Entrée, Espace, 3 (Start the Racing Season), Espace (vue d'ensemble, départ).
+# Captures toutes les 300 VBL (6 s) ; planche : SORTIE/planche.png (Pillow).
+# Le pilotage se fait au joystick : pour jouer, ajouter -w à la commande affichée.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ $# -ge 2 ] || { sed -n '2,11p' "$0"; exit 2; }
@@ -16,12 +18,19 @@ mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 rm -rf "$OUT/kit"
 python3 "$HERE/../../tools/scr_tool.py" falcon "$DISK" "$OUT/kit"
 
-SHOTS=""; for n in $(seq 1000 250 5500); do SHOTS="$SHOTS -s $n"; done
-KEYS="-k 2500:57 -k 2750:57"
-if [ "$MODE" = floppy ]; then SRC="-f $OUT/kit/SCR_F030.ST"; else SRC="-c $OUT/kit/SCR"; fi
-echo "$HERE/hatari_falcon.sh $SRC -m $MON -v 5600 $SHOTS $KEYS $OUT/run"
+# repères en VBL (Hatari, Falcon VGA, EmuTOS) ; depuis la disquette, le menu de la
+# compilation reçoit « 2 » et le jeu arrive au même moment
+if [ "$MODE" = floppy ]; then SRC="-f $OUT/kit/SCR_F030.ST"; D=0; MENU="-k 2500:3"
+else SRC="-c $OUT/kit/SCR"; D=0; MENU=""; fi
+k() { echo "-k $(($1 + D)):$2"; }
+KEYS="$MENU $(k 3600 57) $(k 5000 57) $(k 6000 57) $(k 7700 30) $(k 7750 48) $(k 7800 28)"
+KEYS="$KEYS $(k 8100 57) $(k 8400 4) $(k 8700 57) $(k 9000 57) $(k 9300 57)"
+SHOTS=""; for n in $(seq 1500 300 11100); do SHOTS="$SHOTS -s $((n + D))"; done
+VBLS=$((11200 + D))
+echo "$HERE/hatari_falcon.sh $SRC -m $MON -v $VBLS ... $OUT/run"
 # shellcheck disable=SC2086
-"$HERE/hatari_falcon.sh" $SRC -m "$MON" -v 5600 $SHOTS $KEYS "$OUT/run"
+"$HERE/hatari_falcon.sh" $SRC -m "$MON" -v $VBLS $SHOTS $KEYS "$OUT/run" > /dev/null
+grep -a -i "panic\|crash" "$OUT/run/console.txt" && echo "PLANTAGE : voir $OUT/run/console.txt"
 
 python3 - "$OUT" <<'PY' || true
 import glob, os, sys
