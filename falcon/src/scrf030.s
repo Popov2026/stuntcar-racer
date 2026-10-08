@@ -22,11 +22,27 @@
 ;  * son : sortie YM2149 (PSG) dirigée vers le codec ;
 ;  * en option, mode « 8 MHz + bus STE » proche d'un ST.
 ;
+; Mode fluide (par défaut) : quand le jeu installe sa VBL, le relais le reconnaît
+; (signature) et
+;  * rallume les caches du 68030 (le jeu est en place ; le cache d'instructions
+;    est vidé à chaque VBL par prudence) : un tour de jeu passe de 2,9 à 1,8 VBL ;
+;  * dessine une IMAGE INTERMÉDIAIRE à chaque tour : la logique du jeu tourne
+;    toujours à 8,33 tours/s (une fois toutes les 6 VBL, comme sur ST) et son rendu
+;    reste à sa place ; pendant l'attente de fin de tour ($4B0A6), le rendu du jeu
+;    ($51BCC) est appelé une fois de plus, caméra et adversaire à mi-chemin entre
+;    le tour précédent et le tour courant, dans un troisième écran affiché à
+;    mi-tour (ou à T+4, T+5 s'il ne peut être prêt avant : la caméra est alors
+;    aux 4/6, 5/6 du chemin) : jusqu'à 16,7 images/s. Les variables que le rendu modifie (snaptab.s) sont
+;    sauvegardées puis restaurées : la partie reste celle du jeu d'origine, état
+;    pour état. Pas d'image intermédiaire si le temps restant dans le tour ne
+;    couvre pas sa durée mesurée (horloge 200 Hz), ou si la caméra saute (grue).
+;
 ; Options (ligne de commande, première ligne de SCRF030.INF, ou touches
 ; enfoncées au lancement) :
 ;   8 / Shift      8 MHz, bus STE (au plus près d'un ST)
-;   C / Control    garder les caches tels que TOS les a laissés
+;   C / Control    caches tels que TOS les a laissés, dès le lancement
 ;   N / Alternate  pas de correction 60 Hz
+;   O              jeu d'origine : ni image intermédiaire, ni caches
 ;
 ; Assemblage : vasmm68k_mot -Ftos -m68030 -devpac -nosym -o SCRF030.PRG scrf030.s
 ; Variante dossier AUTO (reste résidente, ne lance rien, ne rétablit rien) :
@@ -43,6 +59,26 @@ AUTO	equ	0
 OPT_8MHZ	equ	0
 OPT_CACHE	equ	1
 OPT_NO60	equ	2
+OPT_ORIG	equ	3
+
+; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
+G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
+G_RENDCALL	equ	$4aa8c-$10100		; jsr $51BCC de la boucle de course
+G_RENDER	equ	$51bcc-$10100		; rendu de la scène et du cockpit
+G_RELOAD	equ	$4b0c2-$10100		; move.b #6,$4EC20 (6 VBL par tour)
+G_WAITCALL	equ	$4ab90-$10100		; jsr $4B0A6 de la boucle de course
+G_WAIT		equ	$4b0a6-$10100		; attente de fin de tour et échange des écrans
+G_NAMES		equ	$13498-$10100		; « LITTLE RAMP »
+G_COUNTER	equ	$4ec20-$10100		; VBL restantes dans le tour
+G_DISP		equ	$56c70-$10100		; écran affiché
+G_DRAW		equ	$56c74-$10100		; écran de travail
+G_WIN		equ	$56c78-$10100		; fenêtre 3D de l'écran de travail
+G_CAM		equ	$10ac2-$10100		; x, y, z (16.16), tangage, lacet, roulis
+G_OPP_PIECE	equ	$10907-$10100		; adversaire : pièce,
+G_OPP_SEC	equ	$108f6-$10100		;   section.fraction,
+G_OPP_LAT	equ	$109d6-$10100		;   position en travers
+G_END		equ	$73370-$10100		; fin de la BSS du jeu
+CAM_JUMP	equ	$02000000		; écart (x, y ou z) au-delà duquel la caméra a sauté
 
 ; Vsetmode
 STMODES		equ	$80
@@ -217,8 +253,11 @@ parse_options:
 	bne.s	.notc
 	bset	#OPT_CACHE,d4
 .notc:	cmp.b	#'N',d0
-	bne.s	.next
+	bne.s	.notn
 	bset	#OPT_NO60,d4
+.notn:	cmp.b	#'O',d0
+	bne.s	.next
+	bset	#OPT_ORIG,d4
 .next:	dbf	d1,.loop
 .eol:	rts
 
@@ -238,7 +277,11 @@ print_options:
 	beq.s	.o3
 	lea	txt_on(pc),a0
 	bsr	print
-.o3:	lea	txt_crlf(pc),a0
+.o3:	btst	#OPT_ORIG,d3
+	beq.s	.o4
+	lea	txt_oo(pc),a0
+	bsr	print
+.o4:	lea	txt_crlf(pc),a0
 	bra	print
 
 ; ---------------------------------------------------------------------------
@@ -487,12 +530,24 @@ hw_install:
 	move.l	0.w,vectab			; SSP / PC de reset : recopiés
 	move.l	4.w,vectab+4
 	move.l	#priv_violation,vectab+$20
+	move.l	#vbl_hook,vectab+$70
+	clr.w	div60
 	tst.w	hz60
 	beq.s	.no60
 	btst	#OPT_NO60,options+1
 	bne.s	.no60
-	move.l	#vbl_5of6,vectab+$70
+	move.w	#1,div60			; 60 Hz : 5 VBL sur 6
 .no60:
+	move.l	old_cacr,d0			; caches du mode fluide : ceux du TOS,
+	and.w	#$3111,d0			; ou WA+DBE+ED+IBE+EI s'il les avait coupés
+	btst	#0,d0
+	bne.s	.cv
+	move.w	#$3111,d0
+.cv:	or.w	#$0808,d0			; vidés à l'allumage
+	move.l	d0,cache_on_value
+	move.l	#screen_mem+255,d0		; troisième écran (image intermédiaire)
+	and.l	#$ffffff00,d0
+	move.l	d0,xbuf
 	tst.w	is_030
 	beq.s	.noflush
 	movec	cacr,d0				; les relais sont du code : vider le cache d'instructions
@@ -518,6 +573,9 @@ hw_restore:
 	beq.s	.done
 	move.w	sr,-(sp)
 	or.w	#$0700,sr
+	clr.w	icache_on
+	clr.w	interp_on
+	clr.w	game_ok
 	move.b	old_byte_ff,$ff.w
 	move.l	old_vbr,d0
 	movec	d0,vbr
@@ -533,13 +591,294 @@ hw_restore:
 .done:	rts
 	endc
 
-; VBL à 60 Hz : cinq VBL sur six sont transmises au vecteur $70 (50 Hz en moyenne)
-vbl_5of6:
+; VBL : reconnaissance du jeu, vidage du cache d'instructions, et à 60 Hz cinq
+; VBL sur six seulement transmises au vecteur $70 (50 Hz en moyenne)
+vbl_hook:
+	addq.l	#1,vbl_ticks
+	tst.w	game_ok
+	bne.s	.ready
+	bsr	detect_game
+.ready:	tst.w	icache_on
+	beq.s	.nofl
+	move.l	d0,-(sp)
+	movec	cacr,d0
+	bset	#3,d0				; CI : vide le cache d'instructions
+	movec	d0,cacr
+	move.l	(sp)+,d0
+.nofl:	tst.w	div60
+	beq.s	.pass
 	subq.w	#1,vbl_phase
 	bne.s	.pass
 	move.w	#6,vbl_phase
 	rte
 .pass:	move.l	$70.w,-(sp)
+	rts
+
+; le vecteur $70 pointe-t-il sur la VBL du jeu ? (vérifié une fois par valeur du vecteur)
+detect_game:
+	movem.l	d0/a0,-(sp)
+	move.l	$70.w,d0
+	cmp.l	last_vbl70,d0
+	beq	.no
+	move.l	d0,last_vbl70
+	sub.l	#G_VBL,d0			; base TEXT supposée du jeu
+	cmp.l	#$800,d0
+	blo	.no
+	move.l	d0,a0
+	add.l	#G_END,d0
+	cmp.l	$42e.w,d0			; phystop : tout doit être en RAM
+	bhi	.no
+	cmp.l	#$48e7fffe,G_VBL(a0)
+	bne	.no
+	cmp.l	#$13fc0006,G_RELOAD(a0)
+	bne	.no
+	cmp.l	#'LITT',G_NAMES(a0)
+	bne	.no
+	cmp.w	#$4eb9,G_RENDCALL(a0)
+	bne	.no
+	move.l	a0,d0
+	add.l	#G_RENDER,d0
+	cmp.l	G_RENDCALL+2(a0),d0
+	bne	.no
+	move.l	d0,render_addr
+	cmp.w	#$4eb9,G_WAITCALL(a0)
+	bne	.no
+	move.l	a0,d0
+	add.l	#G_WAIT,d0
+	cmp.l	G_WAITCALL+2(a0),d0
+	bne	.no
+	move.l	d0,wait_addr
+	move.l	a0,game_base
+	move.w	#1,game_ok
+	btst	#OPT_ORIG,options+1
+	bne.s	.no
+	tst.w	is_030
+	beq.s	.nocache
+	move.l	cache_on_value,d0		; le jeu est en place : caches allumés
+	movec	d0,cacr
+	move.w	#1,icache_on
+.nocache:
+	clr.w	have_prev
+	move.l	#interp_wait,G_WAITCALL+2(a0)	; jsr interp_wait
+	move.w	#1,interp_on
+	tst.w	is_030
+	beq.s	.no
+	movec	cacr,d0
+	bset	#3,d0				; code modifié : vider le cache d'instructions
+	movec	d0,cacr
+.no:	movem.l	(sp)+,d0/a0
+	rts
+
+; ---------------------------------------------------------------------------
+; appelée par la boucle de course à la place de « jsr $4B0A6 » (attente de la fin du
+; tour, superviseur) : la logique et le rendu du tour N sont faits, aux mêmes instants
+; que dans le jeu d'origine ; on dessine l'image intermédiaire pendant l'attente.
+interp_wait:
+	movem.l	d0-d7/a0-a6,-(sp)
+	lea	est_interp,a0
+	bsr	decay
+	move.l	game_base,a6
+	lea	G_CAM(a6),a0			; état du tour N
+	lea	cam_cur,a1
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.w	(a0)+,(a1)+
+	move.b	G_OPP_PIECE(a6),(a1)+
+	move.b	G_OPP_PIECE(a6),(a1)+
+	move.w	G_OPP_SEC(a6),(a1)+
+	move.w	G_OPP_LAT(a6),(a1)+
+	move.l	vbl_ticks,d0			; tour précédent récent ?
+	move.l	d0,d1
+	sub.l	last_call,d1
+	move.l	d0,last_call
+	cmp.l	#15,d1
+	bhi	.skip
+	tst.w	have_prev
+	beq	.skip
+; quand sera-t-elle affichée ? Le tour a commencé à T (compteur rechargé à 6) ; en
+; ticks de 5 ms (4 par VBL) : fin prévue = (6-compteur)*4 + 2 (demi-VBL entamée)
+; + durée estimée. Affichage à la VBL suivante : T+k, k = 3 au plus tôt (mi-tour) ;
+; au-delà de T+5 elle ne servirait plus à rien.
+	moveq	#6,d0
+	sub.b	G_COUNTER(a6),d0
+	lsl.w	#2,d0
+	addq.w	#2+3,d0				; +2 : VBL entamée ; +3 : arrondi au-dessus
+	add.w	est_interp,d0
+	lsr.w	#2,d0
+	cmp.w	#3,d0
+	bhs.s	.k3
+	moveq	#3,d0
+.k3:	cmp.w	#5,d0
+	bhi	.skip
+	move.w	d0,slot_k
+	lea	cam_cur,a0
+	lea	cam_prev,a1
+	moveq	#3-1,d2
+.jmp:	move.l	(a0)+,d0			; x, y, z : saut de caméra ?
+	sub.l	(a1)+,d0
+	bpl.s	.jp
+	neg.l	d0
+.jp:	cmp.l	#CAM_JUMP,d0
+	bhi	.skip
+	dbf	d2,.jmp
+
+	move.l	$4ba.w,t_start
+	bsr	snap_save
+	bsr	set_midpoint
+	bsr	copy_frame			; image affichée -> troisième écran
+	move.l	G_DRAW(a6),save_draw
+	move.l	G_WIN(a6),save_win
+	move.l	xbuf,d0
+	move.l	d0,G_DRAW(a6)
+	add.l	#2576,d0			; comme $10824 : fenêtre 3D
+	move.l	d0,G_WIN(a6)
+	movem.l	(sp),d0-d7/a0-a6		; registres du jeu à l'appel
+	jsr	([render_addr])
+	move.l	game_base,a6
+	move.l	save_draw,G_DRAW(a6)
+	move.l	save_win,G_WIN(a6)
+	bsr	snap_restore
+	lea	cam_cur,a0			; caméra du tour N
+	lea	G_CAM(a6),a1
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.w	(a0)+,(a1)+
+	move.l	$4ba.w,d0			; durée de l'image intermédiaire
+	sub.l	t_start,d0
+	lea	est_interp,a0
+	bsr	estimate
+	tst.b	G_COUNTER(a6)			; trop tard : le tour est fini, on ne l'affiche pas
+	beq.s	.skip
+	moveq	#7,d1				; écrite quand le compteur vaut 7-k :
+	sub.w	slot_k,d1			; visible à la VBL suivante, T+k
+.wait:	cmp.b	G_COUNTER(a6),d1
+	blo.s	.wait
+	move.l	xbuf,d0
+	lsr.l	#8,d0
+	move.b	d0,$ffff8203.w
+	lsr.w	#8,d0
+	move.b	d0,$ffff8201.w
+	addq.l	#1,interp_count
+.skip:	lea	cam_cur,a0			; le tour N devient le précédent
+	lea	cam_prev,a1
+	moveq	#(CAM_BYTES/2)-1,d0
+.cp:	move.w	(a0)+,(a1)+
+	dbf	d0,.cp
+	move.w	#1,have_prev
+	movem.l	(sp)+,d0-d7/a0-a6
+	jmp	([wait_addr])			; attente et échange des écrans du jeu
+
+; estimation d'une durée (ticks de 5 ms) : monte aussitôt à la mesure ; elle redescend
+; d'un tick par tour à l'entrée d'interp_wait (decay)
+estimate:
+	cmp.l	#100,d0
+	bls.s	.ok
+	moveq	#100,d0
+.ok:	cmp.w	(a0),d0
+	bls.s	.keep
+	move.w	d0,(a0)
+.keep:	rts
+
+decay:	tst.w	(a0)
+	beq.s	.z
+	subq.w	#1,(a0)
+.z:	rts
+
+; caméra et adversaire à mi-chemin entre les tours N-1 et N
+set_midpoint:
+	move.w	slot_k,d3			; fraction k/6 du chemin entre N-1 et N
+	lea	cam_prev,a0
+	lea	cam_cur,a1
+	lea	G_CAM(a6),a2
+	moveq	#3-1,d2
+.pos:	move.l	(a1)+,d0
+	move.l	(a0)+,d1
+	sub.l	d1,d0
+	bsr.s	.frac
+	add.l	d1,d0
+	move.l	d0,(a2)+
+	dbf	d2,.pos
+	moveq	#3-1,d2
+.ang:	move.w	(a1)+,d0			; angles : différence sur 16 bits (tour complet)
+	move.w	(a0)+,d1
+	sub.w	d1,d0
+	ext.l	d0
+	bsr.s	.frac
+	add.w	d1,d0
+	move.w	d0,(a2)+
+	dbf	d2,.ang
+	move.w	(a0)+,d0			; adversaire : sur la même pièce seulement
+	cmp.w	(a1)+,d0
+	bne.s	.done
+	moveq	#0,d0
+	move.w	(a1)+,d0			; section.fraction (sans signe)
+	moveq	#0,d1
+	move.w	(a0)+,d1
+	sub.l	d1,d0
+	bsr.s	.frac
+	add.w	d1,d0
+	move.w	d0,G_OPP_SEC(a6)
+	move.w	(a1)+,d0
+	move.w	(a0)+,d1
+	sub.w	d1,d0
+	ext.l	d0
+	bsr.s	.frac
+	add.w	d1,d0
+	move.w	d0,G_OPP_LAT(a6)
+.done:	rts
+.frac:	muls.l	d3,d0				; d0 = d0 * k / 6 (écarts < $02000000 : pas de débordement)
+	divs.l	#6,d0
+	rts
+
+; écran affiché -> troisième écran (32000 octets) : le tableau de bord y reste à jour
+copy_frame:
+	move.l	G_DISP(a6),a0
+	move.l	xbuf,a1
+	move.w	#32000/40-1,d7
+.c:	movem.l	(a0)+,d0-d6/a2-a4
+	movem.l	d0-d6/a2-a4,(a1)
+	lea	40(a1),a1
+	dbf	d7,.c
+	rts
+
+; zones de snaptab : jeu -> snapbuf, et retour
+snap_save:
+	lea	snaptab,a3
+	lea	snapbuf,a1
+.l:	move.l	(a3)+,d0
+	beq.s	.done
+	move.l	(a3)+,d1
+	lea	-$10100(a6,d0.l),a0
+	bsr.s	copy_blk
+	bra.s	.l
+.done:	rts
+
+snap_restore:
+	lea	snaptab,a3
+	lea	snapbuf,a0
+.l:	move.l	(a3)+,d0
+	beq.s	.done
+	move.l	(a3)+,d1
+	lea	-$10100(a6,d0.l),a1
+	bsr.s	copy_blk
+	bra.s	.l
+.done:	rts
+
+; d1 octets de (a0)+ vers (a1)+ (le 68030 accepte les longs non alignés)
+copy_blk:
+	move.w	d1,d2
+	lsr.w	#2,d2
+	bra.s	.ln
+.lp:	move.l	(a0)+,(a1)+
+.ln:	dbf	d2,.lp
+	and.w	#3,d1
+	bra.s	.bn
+.bp:	move.b	(a0)+,(a1)+
+.bn:	dbf	d1,.bp
 	rts
 
 ; violation de privilège : émule « move sr,Dn » et « move sr,-(a7) » en mode utilisateur
@@ -617,12 +956,14 @@ txt_banner:
 	dc.b	"(dossier AUTO)",13,10
 	endc
 	dc.b	"Shift: 8 MHz  Control: caches",13,10
-	dc.b	"Alternate: pas de correction 60 Hz",13,10,0
+	dc.b	"Alternate: pas de correction 60 Hz",13,10
+	dc.b	"(O dans SCRF030.INF : jeu d'origine)",13,10,0
 txt_opts:
 	dc.b	"Options :",0
 txt_o8:	dc.b	" 8MHz",0
 txt_oc:	dc.b	" caches",0
 txt_on:	dc.b	" 60Hz",0
+txt_oo:	dc.b	" origine",0
 txt_crlf:
 	dc.b	13,10,0
 txt_notfalcon:
@@ -649,6 +990,8 @@ inf_name:
 	even
 vbl_phase:
 	dc.w	6
+	even
+	include	"snaptab.s"
 
 ; ---------------------------------------------------------------------------
 	bss
@@ -680,6 +1023,29 @@ old_vbr:	ds.l	1
 old_busctrl:	ds.w	1
 old_byte_ff:	ds.w	1
 priv_count:	ds.l	1
+div60:		ds.w	1
+vbl_ticks:	ds.l	1
+last_vbl70:	ds.l	1
+game_ok:	ds.w	1
+game_base:	ds.l	1
+render_addr:	ds.l	1
+wait_addr:	ds.l	1
+cache_on_value:	ds.l	1
+icache_on:	ds.w	1
+interp_on:	ds.w	1
+have_prev:	ds.w	1
+last_call:	ds.l	1
+interp_count:	ds.l	1
+xbuf:		ds.l	1
+save_draw:	ds.l	1
+t_start:	ds.l	1
+slot_k:		ds.w	1
+est_interp:	ds.w	1
+save_win:	ds.l	1
+CAM_BYTES	equ	18+2+2+2		; caméra, pièce (x2), section, travers de l'adversaire
+cam_cur:	ds.b	CAM_BYTES
+cam_prev:	ds.b	CAM_BYTES
+snapbuf:	ds.b	SNAP_BYTES+16
 old_stpal:	ds.w	16
 old_fpal:	ds.l	256
 inf_buf:	ds.b	64

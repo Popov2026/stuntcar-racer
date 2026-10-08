@@ -5,11 +5,11 @@ VFLAGS  = -Ftos -m68030 -devpac -nosym -quiet
 
 all: bin/SCRF030.PRG bin/F030AUTO.PRG test/build/GAME.PUT test/build/DEBUT.PRG
 
-bin/SCRF030.PRG: src/scrf030.s
+bin/SCRF030.PRG: src/scrf030.s src/snaptab.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -o $@ $<
 
-bin/F030AUTO.PRG: src/scrf030.s
+bin/F030AUTO.PRG: src/scrf030.s src/snaptab.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -DAUTO=1 -o $@ $<
 
