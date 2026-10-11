@@ -26,18 +26,17 @@
 ; (signature) et
 ;  * rallume les caches du 68030 (le jeu est en place ; le cache d'instructions
 ;    est vidé à chaque VBL par prudence) : un tour de jeu passe de 2,9 à 1,8 VBL ;
-;  * dessine une IMAGE INTERMÉDIAIRE à chaque tour : la logique du jeu tourne
-;    toujours à 8,33 tours/s (une fois toutes les 6 VBL, comme sur ST) et son rendu
-;    reste à sa place ; pendant l'attente de fin de tour ($4B0A6), le rendu du jeu
-;    ($51BCC) est appelé une fois de plus, caméra et adversaire à mi-chemin entre
-;    le tour précédent et le tour courant, dans un troisième écran affiché à
-;    mi-tour (ou à T+4, T+5 s'il ne peut être prêt avant : la caméra est alors
-;    aux 4/6, 5/6 du chemin) : 16,3 images/s mesurées (8,33 sans). On ne recopie dans
-;    ce troisième écran que ce que le rendu ne repeint pas (tout sauf la fenêtre 3D).
-;    Les variables que le rendu modifie (snaptab.s) sont
-;    sauvegardées puis restaurées : la partie reste celle du jeu d'origine, état
-;    pour état. Pas d'image intermédiaire si le temps restant dans le tour ne
-;    couvre pas sa durée mesurée (horloge 200 Hz), ou si la caméra saute (grue).
+;  * dessine une ou deux IMAGES EXTRAPOLÉES par tour : la logique du jeu tourne
+;    toujours à 8,33 tours/s (une fois toutes les 6 VBL, comme sur ST), son rendu et
+;    l'échange des écrans restent à leur place ; pendant l'attente de fin de tour
+;    ($4B0A6), le rendu du jeu ($51BCC) est rappelé, caméra et adversaire prolongés de
+;    2/6 et 4/6 de tour (ou 3/6) dans le sens du dernier déplacement, dans des écrans
+;    à nous ; la VBL les affiche au tour suivant à V0+2 et V0+4 (ou V0+3), V0 étant
+;    l'échange du jeu. On n'y recopie de l'image du tour que ce que le rendu ne repeint
+;    pas (tout sauf la fenêtre 3D). Les variables que le rendu modifie (snaptab.s)
+;    sont sauvegardées puis restaurées : la partie reste celle du jeu d'origine, état
+;    pour état. Nombre d'images selon le temps restant dans le tour et leur durée
+;    mesurée (horloge 200 Hz) ; aucune si la caméra saute (grue).
 ;
 ; Options (ligne de commande, première ligne de SCRF030.INF, ou touches
 ; enfoncées au lancement) :
@@ -547,9 +546,9 @@ hw_install:
 	move.w	#$3111,d0
 .cv:	or.w	#$0808,d0			; vidés à l'allumage
 	move.l	d0,cache_on_value
-	move.l	#screen_mem+255,d0		; troisième écran (image intermédiaire)
+	move.l	#ebuf_mem+255,d0		; écrans des images extrapolées
 	and.l	#$ffffff00,d0
-	move.l	d0,xbuf
+	move.l	d0,ebuf
 	tst.w	is_030
 	beq.s	.noflush
 	movec	cacr,d0				; les relais sont du code : vider le cache d'instructions
@@ -613,7 +612,10 @@ vbl_hook:
 	bne.s	.pass
 	move.w	#6,vbl_phase
 	rte
-.pass:	move.l	$70.w,-(sp)
+.pass:	tst.w	interp_on
+	beq.s	.go
+	bsr	vbl_flip
+.go:	move.l	$70.w,-(sp)
 	rts
 
 ; le vecteur $70 pointe-t-il sur la VBL du jeu ? (vérifié une fois par valeur du vecteur)
@@ -674,7 +676,10 @@ detect_game:
 ; ---------------------------------------------------------------------------
 ; appelée par la boucle de course à la place de « jsr $4B0A6 » (attente de la fin du
 ; tour, superviseur) : la logique et le rendu du tour N sont faits, aux mêmes instants
-; que dans le jeu d'origine ; on dessine l'image intermédiaire pendant l'attente.
+; que dans le jeu d'origine ; l'image du tour N sera affichée par le jeu au début du
+; tour suivant (VBL V0). Pendant l'attente, on dessine une ou deux images EXTRAPOLÉES
+; (caméra et adversaire prolongés de 2/6 et 4/6 de tour, ou 3/6, selon la vitesse
+; N-1 -> N) qui seront affichées par la VBL à V0+2 et V0+4 (ou V0+3).
 interp_wait:
 	movem.l	d0-d7/a0-a6,-(sp)
 	lea	est_interp,a0
@@ -699,23 +704,24 @@ interp_wait:
 	bhi	.skip
 	tst.w	have_prev
 	beq	.skip
-; quand sera-t-elle affichée ? Le tour a commencé à T (compteur rechargé à 6) ; en
-; ticks de 5 ms (4 par VBL) : fin prévue = (6-compteur)*4 + 2 (demi-VBL entamée)
-; + durée estimée. Affichage à la VBL suivante : T+k, k = 3 au plus tôt (mi-tour) ;
-; au-delà de T+5 elle ne servirait plus à rien.
-	moveq	#6,d0
-	sub.b	G_COUNTER(a6),d0
+; combien d'images avant la fin du tour ? Temps restant, en ticks de 5 ms (4 par VBL) :
+; compteur*4 - 3 (VBL entamée, marge) ; une image coûte est_interp (mesurée).
+	moveq	#0,d0
+	move.b	G_COUNTER(a6),d0
 	lsl.w	#2,d0
-	addq.w	#2+3,d0				; +2 : VBL entamée ; +3 : arrondi au-dessus
-	add.w	est_interp,d0
-	lsr.w	#2,d0
-	cmp.w	#3,d0
-	bhs.s	.k3
-	moveq	#3,d0
-.k3:	cmp.w	#5,d0
+	subq.w	#3,d0
+	move.w	est_interp,d1
+	move.w	d1,d2
+	add.w	d2,d2
+	addq.w	#2,d2
+	moveq	#2,d7				; deux images ?
+	cmp.w	d0,d2
+	bls.s	.n
+	moveq	#1,d7
+	addq.w	#1,d1
+	cmp.w	d0,d1
 	bhi	.skip
-	move.w	d0,slot_k
-	lea	cam_cur,a0
+.n:	lea	cam_cur,a0
 	lea	cam_prev,a1
 	moveq	#3-1,d2
 .jmp:	move.l	(a0)+,d0			; x, y, z : saut de caméra ?
@@ -726,18 +732,34 @@ interp_wait:
 	bhi	.skip
 	dbf	d2,.jmp
 
-	move.l	$4ba.w,t_start
-	bsr	snap_save
-	bsr	set_midpoint
-	bsr	copy_frame			; image affichée -> troisième écran
+	move.l	ebuf,a5				; écrans de ce tour : jeu alterné
+	bchg	#0,ebuf_par+1
+	beq.s	.par
+	add.l	#2*SCREEN_BYTES,a5
+.par:	moveq	#0,d5				; file d'affichage du tour suivant
 	move.l	G_DRAW(a6),save_draw
 	move.l	G_WIN(a6),save_win
-	move.l	xbuf,d0
-	move.l	d0,G_DRAW(a6)
+	bsr	snap_save
+	moveq	#3,d6				; une image : 3/6, à V0+3
+	cmp.w	#1,d7
+	beq.s	.one
+	moveq	#2,d6				; deux : 2/6 et 4/6, à V0+2 et V0+4
+.one:
+.img:	move.l	$4ba.w,t_start
+	move.w	d6,slot_k
+	bsr	set_extrap
+	move.l	a5,a1
+	movem.l	d5-d7,-(sp)
+	bsr	copy_frame			; image du tour N -> écran supplémentaire
+	movem.l	(sp)+,d5-d7
+	move.l	a5,G_DRAW(a6)
+	move.l	a5,d0
 	add.l	#2576,d0			; comme $10824 : fenêtre 3D
 	move.l	d0,G_WIN(a6)
-	movem.l	(sp),d0-d7/a0-a6		; registres du jeu à l'appel
+	movem.l	d5-d7/a5,-(sp)
+	movem.l	16(sp),d0-d7/a0-a6		; registres du jeu à l'appel
 	jsr	([render_addr])
+	movem.l	(sp)+,d5-d7/a5
 	move.l	game_base,a6
 	move.l	save_draw,G_DRAW(a6)
 	move.l	save_win,G_WIN(a6)
@@ -749,22 +771,35 @@ interp_wait:
 	move.l	(a0)+,(a1)+
 	move.l	(a0)+,(a1)+
 	move.w	(a0)+,(a1)+
-	move.l	$4ba.w,d0			; durée de l'image intermédiaire
+	move.l	$4ba.w,d0			; durée de cette image
 	sub.l	t_start,d0
 	lea	est_interp,a0
 	bsr	estimate
-	tst.b	G_COUNTER(a6)			; trop tard : le tour est fini, on ne l'affiche pas
-	beq.s	.skip
-	moveq	#7,d1				; écrite quand le compteur vaut 7-k :
-	sub.w	slot_k,d1			; visible à la VBL suivante, T+k
-.wait:	cmp.b	G_COUNTER(a6),d1
-	blo.s	.wait
-	move.l	xbuf,d0
-	lsr.l	#8,d0
-	move.b	d0,$ffff8203.w
-	lsr.w	#8,d0
-	move.b	d0,$ffff8201.w
-	addq.l	#1,interp_count
+	moveq	#7,d0				; montrée par la VBL qui fait passer le
+	sub.w	d6,d0				; compteur de 7-k à 6-k : V0+k
+	lea	stg_c,a0
+	move.b	d0,(a0,d5.w)
+	move.l	a5,stg_a-stg_c(a0,d5.w*4)
+	addq.w	#1,d5
+	move.w	d5,stg_n
+	subq.w	#1,d7
+	beq.s	.staged
+	moveq	#0,d0				; reste-t-il le temps d'une deuxième ?
+	move.b	G_COUNTER(a6),d0
+	lsl.w	#2,d0
+	subq.w	#3,d0
+	move.w	est_interp,d1
+	addq.w	#1,d1
+	cmp.w	d0,d1
+	bhi.s	.staged
+	add.l	#SCREEN_BYTES,a5
+	addq.w	#2,d6
+	bra	.img
+.staged:
+	move.w	#1,stg_ready			; à prendre par la VBL qui termine le tour
+	tst.b	G_COUNTER(a6)
+	bne.s	.skip
+	clr.w	stg_ready			; trop tard : fin de tour déjà passée
 .skip:	lea	cam_cur,a0			; le tour N devient le précédent
 	lea	cam_prev,a1
 	moveq	#(CAM_BYTES/2)-1,d0
@@ -773,6 +808,44 @@ interp_wait:
 	move.w	#1,have_prev
 	movem.l	(sp)+,d0-d7/a0-a6
 	jmp	([wait_addr])			; attente et échange des écrans du jeu
+
+; VBL (transmise au jeu) : affiche les images extrapolées au bon instant. Le compteur
+; du jeu, lu avant que sa VBL ne le décrémente, vaut 1 à la VBL qui finit le tour (V0) :
+; la file préparée pendant le tour devient active ; sinon, on affiche l'image suivante
+; de la file active quand le compteur atteint sa valeur.
+vbl_flip:
+	movem.l	d0-d1/a0-a1,-(sp)
+	move.l	game_base,a0
+	move.b	G_COUNTER(a0),d0
+	cmp.b	#1,d0
+	bne.s	.act
+	clr.w	act_n				; ce qui n'a pas été montré est abandonné
+	tst.w	stg_ready
+	beq.s	.out
+	lea	stg_c,a0
+	lea	act_c,a1
+	moveq	#(STG_BYTES/2)-1,d1
+.cp:	move.w	(a0)+,(a1)+
+	dbf	d1,.cp
+	move.w	stg_n,act_n
+	clr.w	act_i
+	clr.w	stg_ready
+	bra.s	.out
+.act:	move.w	act_i,d1
+	cmp.w	act_n,d1
+	bhs.s	.out
+	lea	act_c,a1
+	cmp.b	(a1,d1.w),d0
+	bne.s	.out
+	move.l	act_a-act_c(a1,d1.w*4),d0
+	lsr.l	#8,d0
+	move.b	d0,$ffff8203.w
+	lsr.w	#8,d0
+	move.b	d0,$ffff8201.w
+	addq.w	#1,act_i
+	addq.l	#1,interp_count
+.out:	movem.l	(sp)+,d0-d1/a0-a1
+	rts
 
 ; estimation d'une durée (ticks de 5 ms) : monte aussitôt à la mesure ; elle redescend
 ; d'un tick par tour à l'entrée d'interp_wait (decay)
@@ -791,23 +864,23 @@ decay:	tst.w	(a0)
 .z:	rts
 
 ; caméra et adversaire à mi-chemin entre les tours N-1 et N
-set_midpoint:
-	move.w	slot_k,d3			; fraction k/6 du chemin entre N-1 et N
+set_extrap:
+	move.w	slot_k,d3			; N + (N - (N-1)) * k/6
 	lea	cam_prev,a0
 	lea	cam_cur,a1
 	lea	G_CAM(a6),a2
 	moveq	#3-1,d2
-.pos:	move.l	(a1)+,d0
-	move.l	(a0)+,d1
-	sub.l	d1,d0
+.pos:	move.l	(a1)+,d1
+	move.l	d1,d0
+	sub.l	(a0)+,d0
 	bsr.s	.frac
 	add.l	d1,d0
 	move.l	d0,(a2)+
 	dbf	d2,.pos
 	moveq	#3-1,d2
-.ang:	move.w	(a1)+,d0			; angles : différence sur 16 bits (tour complet)
-	move.w	(a0)+,d1
-	sub.w	d1,d0
+.ang:	move.w	(a1)+,d1			; angles : différence sur 16 bits (tour complet)
+	move.w	d1,d0
+	sub.w	(a0)+,d0
 	ext.l	d0
 	bsr.s	.frac
 	add.w	d1,d0
@@ -816,17 +889,22 @@ set_midpoint:
 	move.w	(a0)+,d0			; adversaire : sur la même pièce seulement
 	cmp.w	(a1)+,d0
 	bne.s	.done
+	move.w	(a1)+,d1			; section.fraction : sans changer de section
 	moveq	#0,d0
-	move.w	(a1)+,d0			; section.fraction (sans signe)
-	moveq	#0,d1
-	move.w	(a0)+,d1
-	sub.l	d1,d0
+	move.w	d1,d0
+	moveq	#0,d4
+	move.w	(a0)+,d4
+	sub.l	d4,d0
 	bsr.s	.frac
 	add.w	d1,d0
+	move.w	d0,d4
+	eor.w	d1,d4
+	and.w	#$ff00,d4
+	bne.s	.sec
 	move.w	d0,G_OPP_SEC(a6)
-	move.w	(a1)+,d0
-	move.w	(a0)+,d1
-	sub.w	d1,d0
+.sec:	move.w	(a1)+,d1
+	move.w	d1,d0
+	sub.w	(a0)+,d0
 	ext.l	d0
 	bsr.s	.frac
 	add.w	d1,d0
@@ -836,12 +914,11 @@ set_midpoint:
 	divs.l	#6,d0
 	rts
 
-; écran affiché -> troisième écran (32000 octets) : le tableau de bord y reste à jour
+; image du tour N (écran de travail du jeu) -> écran a1 : le tableau de bord y est à jour
 copy_frame:
 ; seulement ce que le rendu ne repeint pas : la fenêtre 3D (128 lignes de 128 octets,
 ; à écran+2576, comme G_WIN) est toujours entièrement redessinée
-	move.l	G_DISP(a6),a0
-	move.l	xbuf,a1
+	move.l	G_DRAW(a6),a0
 	move.w	#2576/16-1,d7			; lignes 0-15 et début de la ligne 16
 	bsr.s	.cp16
 	moveq	#127-1,d6			; entre deux lignes de la fenêtre : 32 octets
@@ -1051,7 +1128,17 @@ interp_on:	ds.w	1
 have_prev:	ds.w	1
 last_call:	ds.l	1
 interp_count:	ds.l	1
-xbuf:		ds.l	1
+ebuf:		ds.l	1
+ebuf_par:	ds.w	1
+stg_ready:	ds.w	1
+stg_n:		ds.w	1
+stg_c:		ds.b	2			; file préparée : valeurs du compteur,
+stg_a:		ds.l	2			;   écrans
+STG_BYTES	equ	10
+act_i:		ds.w	1
+act_n:		ds.w	1
+act_c:		ds.b	2			; file active
+act_a:		ds.l	2
 save_draw:	ds.l	1
 t_start:	ds.l	1
 slot_k:		ds.w	1
@@ -1070,3 +1157,4 @@ relays:		ds.w	3*256
 		ds.l	512
 stack_top:	ds.l	1
 screen_mem:	ds.b	SCREEN_AREA+256
+ebuf_mem:	ds.b	4*SCREEN_BYTES+256		; 4 écrans (32000 = 125*256 : alignés)
