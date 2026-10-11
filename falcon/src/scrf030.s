@@ -26,6 +26,8 @@
 ; (signature) et
 ;  * rallume les caches du 68030 (le jeu est en place ; le cache d'instructions
 ;    est vidé à chaque VBL par prudence) : un tour de jeu passe de 2,9 à 1,8 VBL ;
+;  * remplace des routines du jeu par des versions réécrites pour le 68030, au
+;    résultat identique (turbo.s : tracé des bords de polygones, sprites) ;
 ;  * dessine une ou deux IMAGES EXTRAPOLÉES par tour : la logique du jeu tourne
 ;    toujours à 8,33 tours/s (une fois toutes les 6 VBL, comme sur ST), son rendu et
 ;    l'échange des écrans restent à leur place ; pendant l'attente de fin de tour
@@ -44,6 +46,7 @@
 ;   C / Control    caches tels que TOS les a laissés, dès le lancement
 ;   N / Alternate  pas de correction 60 Hz
 ;   O              jeu d'origine : ni image intermédiaire, ni caches
+;   T              sans les routines réécrites pour le 68030 (turbo.s)
 ;
 ; Assemblage : vasmm68k_mot -Ftos -m68030 -devpac -nosym -o SCRF030.PRG scrf030.s
 ; Variante dossier AUTO (reste résidente, ne lance rien, ne rétablit rien) :
@@ -61,6 +64,7 @@ OPT_8MHZ	equ	0
 OPT_CACHE	equ	1
 OPT_NO60	equ	2
 OPT_ORIG	equ	3
+OPT_NOTURBO	equ	4
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -257,8 +261,11 @@ parse_options:
 	bne.s	.notn
 	bset	#OPT_NO60,d4
 .notn:	cmp.b	#'O',d0
-	bne.s	.next
+	bne.s	.noto
 	bset	#OPT_ORIG,d4
+.noto:	cmp.b	#'T',d0
+	bne.s	.next
+	bset	#OPT_NOTURBO,d4
 .next:	dbf	d1,.loop
 .eol:	rts
 
@@ -282,7 +289,11 @@ print_options:
 	beq.s	.o4
 	lea	txt_oo(pc),a0
 	bsr	print
-.o4:	lea	txt_crlf(pc),a0
+.o4:	btst	#OPT_NOTURBO,d3
+	beq.s	.o5
+	lea	txt_ot(pc),a0
+	bsr	print
+.o5:	lea	txt_crlf(pc),a0
 	bra	print
 
 ; ---------------------------------------------------------------------------
@@ -665,6 +676,13 @@ detect_game:
 	clr.w	have_prev
 	move.l	#interp_wait,G_WAITCALL+2(a0)	; jsr interp_wait
 	move.w	#1,interp_on
+	btst	#OPT_NOTURBO,options+1
+	bne.s	.noturbo
+	bsr	turbo_install
+	ifd	SELFCHECK
+	move.l	#'CHK!',chk_magic
+	endc
+.noturbo:
 	tst.w	is_030
 	beq.s	.no
 	movec	cacr,d0
@@ -713,7 +731,7 @@ interp_wait:
 	move.w	est_interp,d1
 	move.w	d1,d2
 	add.w	d2,d2
-	addq.w	#2,d2
+	addq.w	#4,d2				; (sinon la 2e manquerait : rythme 2/4)
 	moveq	#2,d7				; deux images ?
 	cmp.w	d0,d2
 	bls.s	.n
@@ -721,7 +739,13 @@ interp_wait:
 	addq.w	#1,d1
 	cmp.w	d0,d1
 	bhi	.skip
-.n:	lea	cam_cur,a0
+.n:
+	ifd	DBG
+	move.b	G_COUNTER(a6),dbg_e
+	move.b	est_interp+1,dbg_e+1
+	move.b	d7,dbg_e+2
+	endc
+	lea	cam_cur,a0
 	lea	cam_prev,a1
 	moveq	#3-1,d2
 .jmp:	move.l	(a0)+,d0			; x, y, z : saut de caméra ?
@@ -737,6 +761,9 @@ interp_wait:
 	beq.s	.par
 	add.l	#2*SCREEN_BYTES,a5
 .par:	moveq	#0,d5				; file d'affichage du tour suivant
+	clr.w	stg_ready
+	clr.w	stg_n
+	clr.w	render_aborted
 	move.l	G_DRAW(a6),save_draw
 	move.l	G_WIN(a6),save_win
 	bsr	snap_save
@@ -758,7 +785,12 @@ interp_wait:
 	move.l	d0,G_WIN(a6)
 	movem.l	d5-d7/a5,-(sp)
 	movem.l	16(sp),d0-d7/a0-a6		; registres du jeu à l'appel
+	move.l	sp,render_sp
+	move.l	#.rendered,abort_pc
+	move.w	#1,in_render			; la VBL qui finit le tour l'interrompt
 	jsr	([render_addr])
+.rendered:
+	clr.w	in_render
 	movem.l	(sp)+,d5-d7/a5
 	move.l	game_base,a6
 	move.l	save_draw,G_DRAW(a6)
@@ -773,6 +805,8 @@ interp_wait:
 	move.w	(a0)+,(a1)+
 	move.l	$4ba.w,d0			; durée de cette image
 	sub.l	t_start,d0
+	tst.w	render_aborted			; inachevée : rien à montrer, on s'arrête
+	bne	.skip				; (et sa durée tronquée ne compte pas)
 	lea	est_interp,a0
 	bsr	estimate
 	moveq	#7,d0				; montrée par la VBL qui fait passer le
@@ -782,25 +816,46 @@ interp_wait:
 	move.l	a5,stg_a-stg_c(a0,d5.w*4)
 	addq.w	#1,d5
 	move.w	d5,stg_n
-	subq.w	#1,d7
-	beq.s	.staged
+	move.w	#1,stg_ready			; à prendre par la VBL qui termine le tour
+	tst.b	G_COUNTER(a6)
+	bne.s	.st1
+	clr.w	stg_ready			; trop tard : fin de tour déjà passée
+	bra.s	.skip
+.st1:	subq.w	#1,d7
+	beq.s	.skip
 	moveq	#0,d0				; reste-t-il le temps d'une deuxième ?
-	move.b	G_COUNTER(a6),d0
+	move.b	G_COUNTER(a6),d0		; (si elle déborde, la VBL l'abandonne)
 	lsl.w	#2,d0
-	subq.w	#3,d0
+	subq.w	#2,d0
 	move.w	est_interp,d1
-	addq.w	#1,d1
 	cmp.w	d0,d1
-	bhi.s	.staged
+	bhi.s	.skip
 	add.l	#SCREEN_BYTES,a5
 	addq.w	#2,d6
 	bra	.img
-.staged:
-	move.w	#1,stg_ready			; à prendre par la VBL qui termine le tour
-	tst.b	G_COUNTER(a6)
-	bne.s	.skip
-	clr.w	stg_ready			; trop tard : fin de tour déjà passée
-.skip:	lea	cam_cur,a0			; le tour N devient le précédent
+.skip:
+	ifd	DBG
+	tst.b	dbg_e+2
+	beq.s	.nodbg
+	move.l	a0,-(sp)
+	move.l	dbg_ptr,a0
+	move.b	dbg_e,(a0)+
+	move.b	dbg_e+1,(a0)+
+	move.b	dbg_e+2,(a0)+
+	move.b	stg_n+1,(a0)
+	tst.w	render_aborted
+	beq.s	.d1
+	or.b	#$10,(a0)
+.d1:	addq.l	#1,a0
+	cmp.l	#dbg_end,a0
+	blo.s	.d2
+	lea	dbg_ring,a0
+.d2:	move.l	a0,dbg_ptr
+	clr.b	dbg_e+2
+	move.l	(sp)+,a0
+.nodbg:
+	endc
+	lea	cam_cur,a0			; le tour N devient le précédent
 	lea	cam_prev,a1
 	moveq	#(CAM_BYTES/2)-1,d0
 .cp:	move.w	(a0)+,(a1)+
@@ -808,6 +863,14 @@ interp_wait:
 	move.w	#1,have_prev
 	movem.l	(sp)+,d0-d7/a0-a6
 	jmp	([wait_addr])			; attente et échange des écrans du jeu
+
+; image extrapolée inachevée quand le tour finit : la VBL fait reprendre ici (au retour
+; d'interruption) ; pile du rendu abandonnée, état du jeu rétabli comme après un rendu
+t_abort:
+	move.l	render_sp,sp
+	move.w	#1,render_aborted
+	move.l	abort_pc,-(sp)
+	rts
 
 ; VBL (transmise au jeu) : affiche les images extrapolées au bon instant. Le compteur
 ; du jeu, lu avant que sa VBL ne le décrémente, vaut 1 à la VBL qui finit le tour (V0) :
@@ -819,7 +882,15 @@ vbl_flip:
 	move.b	G_COUNTER(a0),d0
 	cmp.b	#1,d0
 	bne.s	.act
-	clr.w	act_n				; ce qui n'a pas été montré est abandonné
+	tst.w	in_render			; image extrapolée en cours : abandonnée
+	beq.s	.nab
+	move.w	20(sp),d1			; SR empilé : programme principal ?
+	and.w	#$0700,d1
+	cmp.w	#$0300,d1
+	bhi.s	.nab
+	move.l	#t_abort,22(sp)			; PC empilé
+	clr.w	in_render
+.nab:	clr.w	act_n				; ce qui n'a pas été montré est abandonné
 	tst.w	stg_ready
 	beq.s	.out
 	lea	stg_c,a0
@@ -847,6 +918,43 @@ vbl_flip:
 .out:	movem.l	(sp)+,d0-d1/a0-a1
 	rts
 
+; routines réécrites (turbo.s) : adresses du jeu relogées, « jmp » posés (a0 = base)
+turbo_install:
+	movem.l	d0-d2/a1-a2,-(sp)
+	move.l	a0,d0
+	sub.l	#$10100,d0
+	move.l	d0,d2
+	sub.l	grel_delta,d0			; ce qui reste à ajouter
+	move.l	d2,grel_delta
+	lea	grel_start,a1
+.r:	cmp.l	#grel_end,a1
+	bhs.s	.p
+	move.l	(a1)+,a2
+	add.l	d0,(a2)
+	bra.s	.r
+.p:	lea	turbo_tab,a1
+.t:	move.l	(a1)+,d0
+	bmi.s	.done
+	lea	(a0,d0.l),a2
+	move.w	(a1)+,d1
+	move.l	(a1)+,d2
+	cmp.w	(a2),d1				; instruction attendue (pas déjà posé)
+	bne.s	.t
+	move.w	#$4ef9,(a2)			; jmp remplaçante
+	move.l	d2,2(a2)
+	addq.w	#1,turbo_count
+	bra.s	.t
+.done:	movem.l	(sp)+,d0-d2/a1-a2
+	rts
+
+	section	grel,data
+grel_start:
+	section	turbo,code
+	include	"turbo.s"
+	section	grel,data
+grel_end:
+	text
+
 ; estimation d'une durée (ticks de 5 ms) : monte aussitôt à la mesure ; elle redescend
 ; d'un tick par tour à l'entrée d'interp_wait (decay)
 estimate:
@@ -858,7 +966,10 @@ estimate:
 	move.w	d0,(a0)
 .keep:	rts
 
-decay:	tst.w	(a0)
+decay:	addq.w	#1,decay_n			; un tick de moins tous les 4 tours
+	and.w	#3,decay_n
+	bne.s	.z
+	tst.w	(a0)
 	beq.s	.z
 	subq.w	#1,(a0)
 .z:	rts
@@ -1056,6 +1167,7 @@ txt_o8:	dc.b	" 8MHz",0
 txt_oc:	dc.b	" caches",0
 txt_on:	dc.b	" 60Hz",0
 txt_oo:	dc.b	" origine",0
+txt_ot:	dc.b	" sans-turbo",0
 txt_crlf:
 	dc.b	13,10,0
 txt_notfalcon:
@@ -1084,6 +1196,13 @@ vbl_phase:
 	dc.w	6
 	even
 	include	"snaptab.s"
+	ifd	DBG
+dbg_magic:	dc.l	'HIST','HIST'
+dbg_ptr:	dc.l	dbg_ring
+dbg_e:		dc.l	0
+dbg_ring:	dcb.l	256,0
+dbg_end:
+	endc
 
 ; ---------------------------------------------------------------------------
 	bss
@@ -1128,6 +1247,30 @@ interp_on:	ds.w	1
 have_prev:	ds.w	1
 last_call:	ds.l	1
 interp_count:	ds.l	1
+	ifd	SELFCHECK
+chk_magic:	ds.l	1
+chk_ok:		ds.l	1
+chk_bad:	ds.l	1
+chk_in:		ds.l	15
+chk_out:	ds.l	15
+chk_outA:	ds.l	15
+chk_srin:	ds.w	1
+chk_sr:		ds.w	1
+chk_srA:	ds.w	1
+chk_z:		ds.l	2*4+1
+chk_fo:		ds.l	1
+chk_fnew:	ds.l	1
+chk_fn:		ds.l	1
+chk_m0:		ds.b	32000
+chk_m1:		ds.b	32000
+	endc
+grel_delta:	ds.l	1
+render_sp:	ds.l	1
+abort_pc:	ds.l	1
+in_render:	ds.w	1
+render_aborted:	ds.w	1
+decay_n:	ds.w	1
+turbo_count:	ds.w	1
 ebuf:		ds.l	1
 ebuf_par:	ds.w	1
 stg_ready:	ds.w	1

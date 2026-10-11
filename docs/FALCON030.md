@@ -19,10 +19,11 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 | Disquette d'origine : BPB à 0 secteur par cluster | `scr_tool.py falcon` reconstruit une disquette FAT12 standard, `F030AUTO.PRG` (même lanceur, résident, pour le dossier `AUTO`) avant le menu `DEBUT.PRG` |
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
-`N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine, sans mode fluide) — touches au lancement, ligne de commande ou
+`N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine, sans mode fluide), `T` (sans
+les routines réécrites) — touches au lancement, ligne de commande ou
 première ligne de `SCRF030.INF`.
 
-### Mode fluide : 8,33 → 16,3 images/s
+### Mode fluide : 8,33 → 16,7 images/s
 
 Le jeu fait un tour (logique + rendu `$51BCC` + échange d'écran) au plus toutes les 6 VBL
 (compteur `$4EC20` rechargé à 6) : 8,33 images/s sur Falcon (6,5 environ sur ST, dont le rendu
@@ -30,28 +31,64 @@ dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (
 `$4EC24`, `$4B0C2`, nom du circuit, appels `$4AA8C`/`$4AB90`) et :
 
 1. **caches rallumés** : un tour passe de 2,9 à 1,8 VBL ;
-2. **image intermédiaire** : l'appel de l'attente de fin de tour (`jsr $4B0A6`, en `$4AB90`)
-   est détourné. Pendant cette attente, après le rendu normal, le rendu du jeu est rappelé
-   dans un **troisième écran**, caméra (`$10AC2`, 18 octets) et adversaire (pièce, section,
-   position latérale) placés aux k/6 du chemin entre le tour précédent et le tour courant, k
-   étant la VBL où l'image sera visible (3 à 5, prévue d'après la durée mesurée du rendu à
-   l'horloge 200 Hz). L'image est montrée par `$FF8201/03` à la bonne VBL, puis l'attente
-   d'origine reprend.
-   * Le troisième écran ne reçoit de l'image affichée que ce que le rendu ne repeint pas : tout
-     sauf la fenêtre 3D (128 lignes de 128 octets, toujours repeinte d'après 40 rendus
+2. **routines réécrites pour le 68030** (`falcon/src/turbo.s`, voir plus bas) ;
+3. **images extrapolées** : l'appel de l'attente de fin de tour (`jsr $4B0A6`, en `$4AB90`)
+   est détourné. Pendant cette attente, après le rendu normal du tour N (qui sera affiché par
+   le jeu à V0, début du tour suivant), le rendu du jeu est rappelé une ou deux fois, caméra
+   (`$10AC2`, 18 octets) et adversaire (pièce, section, position latérale) **prolongés** de
+   3/6 de tour, ou de 2/6 et 4/6, dans le sens N-1 → N, dans quatre écrans à nous (deux par
+   tour, en alternance). Une file préparée pendant le tour devient active à la VBL qui le
+   termine ; la VBL affiche ensuite chaque image à V0+3, ou V0+2 et V0+4 (`$FF8201/03`).
+   Interpoler entre N-1 et N n'aurait permis de montrer l'image qu'à V0+4 au mieux (elle ne
+   peut être dessinée qu'après le rendu normal) : rythme 4/2.
+   * L'écran supplémentaire ne reçoit de l'image du tour que ce que le rendu ne repeint pas :
+     tout sauf la fenêtre 3D (128 lignes de 128 octets, toujours repeinte d'après 40 rendus
      relevés), soit 15,6 Ko au lieu de 32.
    * Les variables que le rendu modifie (`falcon/src/snaptab.s`, 72 zones, 9,9 Ko, produit par
      `falcon/tools/snaptab.py` à partir de relevés mémoire avant/après rendu et de l'analyse
      statique des écritures) sont sauvegardées puis rétablies, **sauf** celles qu'écrivent les
      interruptions (VBL, chrono, clavier) et la pile.
-   * Pas d'image intermédiaire si elle ne peut être prête avant le tour suivant, ou si la
-     caméra saute (grue du départ).
+   * Nombre d'images d'après le temps restant et leur durée mesurée (horloge 200 Hz) ; aucune
+     si la caméra saute (grue). **Sûreté** : si une image n'est pas finie quand le tour se
+     termine, la VBL détourne son retour d'interruption vers une routine qui abandonne le
+     rendu, rétablit l'état et rend la main au jeu à temps — le jeu échange donc toujours ses
+     écrans à la même VBL que l'original.
 
 Mesures sous Hatari (`--cpu-exact on`, caches du 68030 émulés), accélérateur enfoncé sur Little
-Ramp : **16,3 images/s** (intervalles de 2 et 4 VBL surtout, 3 pour un sixième). Même partie
-rejouée depuis un instantané, avec et sans le mode fluide : position, vitesse, caméra,
-adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique (`$4EEB0`) :
-**1325 états sur 1325 identiques**, aux mêmes VBL.
+Ramp, voiture en course : **une image toutes les 3 VBL, 16,7 images/s** (une image extrapolée
+par tour presque toujours ; deux, pour 25 images/s, demanderaient une image en 30 ms au lieu de
+35 à 45). Même partie rejouée depuis un instantané, avec et sans le mode fluide : position,
+vitesse, caméra, adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique
+(`$4EEB0`) : **tous les états identiques, aux mêmes VBL** (1266 sur 1266).
+
+### Routines réécrites pour le 68030
+
+`falcon/src/turbo.s` : un `jmp` posé à l'entrée de la routine d'origine (adresses du jeu
+relogées à l'installation) ; mêmes octets écrits, mêmes registres au retour (mots forts
+compris), même CCR ; les cas rares (découpage d'un bord, table pleine) retournent au code
+d'origine avant toute écriture. Option `T` : sans elles.
+
+| Routine | Original | Réécrite |
+|---|---|---|
+| `$5353C` tracé d'un bord de polygone (12 % du temps) | Bresenham pas à pas en x : 5 instructions par pixel pour les bords plus larges que hauts | un pas par ligne : x = x0 ± ⌈((j-1)·dx + f)/dy⌉, f = dx/2+1, en q ou q+1 (dx = q·dy + r) ; erreur finale et extrémités démontrées identiques ; 2 fois moins d'instructions |
+| `$56762` sprite masqué du cockpit | lecture + écriture de l'écran pour chaque bloc de 16 pixels | bloc opaque (masque nul) : écrit sans lire ; masque plein et plans nuls : rien ; ≈ 27 % d'accès en moins |
+
+Vérification :
+
+* `falcon/test/bench/` (Musashi en 68030, même version que `native/`) : l'original et la
+  réécrite sur une copie de la mémoire prise en course, entrées au hasard (registres, sommets
+  dans et hors de la fenêtre, table pleine, fond d'écran), comparaison de toute la mémoire et
+  des registres : 300 000 bords, **toutes les pentes** (dx 0-255, dy 0-127, deux sens, deux
+  ordres : 131 072 cas), 5 000 sprites — aucune différence ;
+* dans le jeu sous Hatari, variante de contrôle (`-DSELFCHECK=1 -DCHKEDGE=1` ou `-DCHKSPR=1`) :
+  chaque appel réel exécute l'original puis la réécrite sur les mêmes entrées et compare
+  registres, CCR et mémoire : 40 941 bords et 1 108 sprites d'une course, **aucun écart**.
+
+Remarque : le rendu du jeu lit des variables que la VBL modifie pendant qu'il dessine
+(chrono, tableau de bord…) ; dès qu'il va plus vite ou plus lentement, ses images diffèrent de
+quelques octets à quelques centaines (essai : le rendu d'origine retardé de 7 ms change les 40
+images relevées). Comparer des images entières ne permet donc pas de juger une réécriture :
+d'où les contrôles appel par appel ci-dessus.
 
 **Pourquoi pas le DSP** : profil du 68030 (profileur de Hatari, 10 s de course, mode fluide) :
 
@@ -61,11 +98,13 @@ adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique (
 | tracé des bords de polygones et remplissages (`$53000`-`$55500`), sprites du cockpit (`$56700`) | ≈ 30 % |
 | copies du mode fluide (avant les réductions ci-dessus) | 15 % |
 | **multiplications et divisions** (rotations, projection) | **1,6 %** |
+| VBL du jeu, dont le **son** du moteur sur le YM2149 (`$4EC24`) et le chrono | **0,4 %** |
 | reste du jeu (logique, tri, découpage, tableau de bord) | ≈ 27 % |
 
 Le rendu est limité par les écritures en mémoire. Le DSP n'a pas accès à la mémoire du
 Falcon : tout ce qu'il calcule repasserait mot par mot par le port hôte, au prix de ce qu'on
-voulait gagner. Le déport des calculs 3D rapporterait au mieux 2 %.
+voulait gagner. Le déport des calculs 3D rapporterait au mieux 2 %, celui du son 0,3 % (le
+YM2149 est une vraie puce du Falcon : le 68030 n'y écrit que quelques registres par VBL).
 
 ### Tests sous Hatari
 
