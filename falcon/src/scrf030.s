@@ -1047,8 +1047,39 @@ set_extrap:
 ; image du tour N (écran de travail du jeu) -> écran a1 : le tableau de bord y est à jour
 copy_frame:
 ; seulement ce que le rendu ne repeint pas : la fenêtre 3D (128 lignes de 128 octets,
-; à écran+2576, comme G_WIN) est toujours entièrement redessinée
+; à écran+2576, comme G_WIN) est toujours entièrement redessinée. Et d'un tour à
+; l'autre, hors de la fenêtre, seuls changent le haut du cadre (lignes 0-15) et le bas
+; entre les montants (lignes 144-199, octets 16-143 : tableau de bord) : le reste
+; n'est recopié qu'à la 1re utilisation de l'écran puis une fois sur 8 (9,7 Ko au lieu
+; de 15,6).
+	move.l	a1,d0
+	sub.l	ebuf,d0
+	divu.w	#SCREEN_BYTES,d0
+	lea	ebuf_use,a0
+	addq.b	#1,(a0,d0.w)
+	move.b	(a0,d0.w),d0
+	and.b	#7,d0
+	cmp.b	#1,d0
+	beq.s	.full
 	move.l	G_DRAW(a6),a0
+	move.w	#2560/16-1,d7			; lignes 0-15
+	bsr.s	.cp16
+	lea	144*160+16-2560(a0),a0		; lignes 144-199, octets 16-143
+	lea	144*160+16-2560(a1),a1
+	moveq	#56-1,d6
+.p:	movem.l	(a0)+,d0-d5/a2-a3
+	movem.l	d0-d5/a2-a3,(a1)
+	movem.l	(a0)+,d0-d5/a2-a3
+	movem.l	d0-d5/a2-a3,32(a1)
+	movem.l	(a0)+,d0-d5/a2-a3
+	movem.l	d0-d5/a2-a3,64(a1)
+	movem.l	(a0)+,d0-d5/a2-a3
+	movem.l	d0-d5/a2-a3,96(a1)
+	lea	32(a0),a0
+	lea	160(a1),a1
+	dbf	d6,.p
+	rts
+.full:	move.l	G_DRAW(a6),a0
 	move.w	#2576/16-1,d7			; lignes 0-15 et début de la ligne 16
 	bsr.s	.cp16
 	moveq	#127-1,d6			; entre deux lignes de la fenêtre : 32 octets
@@ -1294,6 +1325,7 @@ decay_n:	ds.w	1
 turbo_count:	ds.w	1
 ebuf:		ds.l	1
 ebuf_par:	ds.w	1
+ebuf_use:	ds.b	4			; utilisations de chaque écran
 stg_ready:	ds.w	1
 stg_q:		ds.w	1			; file préparée : 0 ou 1
 stg_q0:		ds.w	1			; nombre d'images,
