@@ -32,7 +32,9 @@
 ;    ($51BCC) est appelé une fois de plus, caméra et adversaire à mi-chemin entre
 ;    le tour précédent et le tour courant, dans un troisième écran affiché à
 ;    mi-tour (ou à T+4, T+5 s'il ne peut être prêt avant : la caméra est alors
-;    aux 4/6, 5/6 du chemin) : jusqu'à 16,7 images/s. Les variables que le rendu modifie (snaptab.s) sont
+;    aux 4/6, 5/6 du chemin) : 16,3 images/s mesurées (8,33 sans). On ne recopie dans
+;    ce troisième écran que ce que le rendu ne repeint pas (tout sauf la fenêtre 3D).
+;    Les variables que le rendu modifie (snaptab.s) sont
 ;    sauvegardées puis restaurées : la partie reste celle du jeu d'origine, état
 ;    pour état. Pas d'image intermédiaire si le temps restant dans le tour ne
 ;    couvre pas sa durée mesurée (horloge 200 Hz), ou si la caméra saute (grue).
@@ -836,13 +838,26 @@ set_midpoint:
 
 ; écran affiché -> troisième écran (32000 octets) : le tableau de bord y reste à jour
 copy_frame:
+; seulement ce que le rendu ne repeint pas : la fenêtre 3D (128 lignes de 128 octets,
+; à écran+2576, comme G_WIN) est toujours entièrement redessinée
 	move.l	G_DISP(a6),a0
 	move.l	xbuf,a1
-	move.w	#32000/40-1,d7
-.c:	movem.l	(a0)+,d0-d6/a2-a4
-	movem.l	d0-d6/a2-a4,(a1)
-	lea	40(a1),a1
-	dbf	d7,.c
+	move.w	#2576/16-1,d7			; lignes 0-15 et début de la ligne 16
+	bsr.s	.cp16
+	moveq	#127-1,d6			; entre deux lignes de la fenêtre : 32 octets
+.g:	lea	128(a0),a0
+	lea	128(a1),a1
+	movem.l	(a0)+,d0-d5/a2-a3
+	movem.l	d0-d5/a2-a3,(a1)
+	lea	32(a1),a1
+	dbf	d6,.g
+	lea	128(a0),a0			; fin de la ligne 143 et lignes 144-199
+	lea	128(a1),a1
+	move.w	#(32000-143*160-144)/16-1,d7
+.cp16:	movem.l	(a0)+,d0-d3
+	movem.l	d0-d3,(a1)
+	lea	16(a1),a1
+	dbf	d7,.cp16
 	rts
 
 ; zones de snaptab : jeu -> snapbuf, et retour

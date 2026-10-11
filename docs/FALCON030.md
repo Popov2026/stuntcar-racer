@@ -3,7 +3,7 @@
 ## Ce qui est fait : `falcon/`
 
 Le programme d'origine (`GAME.PUT`, sur **votre** disquette) est exécuté **tel quel** par le
-68030. Le lanceur `falcon/bin/SCRF030.PRG` (source `falcon/src/scrf030.s`, 2 Ko) prépare la
+68030. Le lanceur `falcon/bin/SCRF030.PRG` (source `falcon/src/scrf030.s`, 4 Ko) prépare la
 machine pour qu'elle s'y comporte comme un Atari ST, puis remet tout en place au retour.
 Mode d'emploi : `falcon/LISEZMOI.txt`.
 
@@ -11,7 +11,7 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 |---|---|
 | Le jeu suppose la basse résolution ST (320×200, 16 couleurs, plans entrelacés, base vidéo `$FF8201/03`, palette `$FF8240`) | mode compatible du VIDEL (`Setscreen` mode 3, `STMODES\|BPS4`, lignes doublées en VGA) sur un écran à nous, aligné sur 256 octets, en ST-RAM ; mode, écran et palettes (ST et VIDEL) rétablis |
 | Le chargeur JEK de `GAME.PUT` recopie sa dernière routine à **écran + `$7F00`** (sur un ST, l'écran est au sommet de la RAM : cette zone est libre jusqu'à la fin de la mémoire). Avec un écran de 32 000 octets ailleurs, la routine écrase `GAME.PUT` pendant qu'il est recopié (exception « Line F » à `text+$9A`) ; avec l'écran d'EmuTOS en haut des 14 Mo (`$DF8200`), elle sortirait de la RAM | écran de **32 Ko** (`$8000`) dans la BSS du lanceur, comme le haut de la RAM d'un ST, y compris pour `F030AUTO.PRG` (résident) |
-| Code décompressé (JEK/ByteKiller) puis relogé avant exécution, code issu du 6502 | caches d'instructions et de données coupés (`CACR = $0808`) |
+| Code décompressé (JEK/ByteKiller) puis relogé avant exécution, code issu du 6502 | caches d'instructions et de données coupés (`CACR = $0808`) pendant le chargement ; rallumés quand le jeu installe sa VBL (mode fluide), le cache d'instructions étant vidé à chaque VBL |
 | Logique, chrono et son moteur cadencés par la VBL (8,33 ticks/s à 50 Hz) : 20 % trop rapides à 60 Hz | table des vecteurs déplacée (`VBR`) vers des relais `move.l (n*4).w,-(sp) ; rts` ; à 60 Hz, le relais de la VBL ne transmet que 5 VBL sur 6. La fréquence est **mesurée** (horloge 200 Hz) |
 | `move sr,<ea>` privilégiée sur 68010+ | violation de privilège : `move sr,Dn` et `move sr,-(a7)` émulés en mode utilisateur, sinon renvoi au vecteur du TOS |
 | La physique lit l'octet `$FF` (`move.b $FF.l,d0` en `$49718`, au lieu de `#$FF`) : octet faible du vecteur 63, différent sur chaque TOS (EmuTOS : `$02`) | le CPU lisant la table déplacée, l'octet `$FF` reçoit la valeur voulue `$FF` (rétabli au retour) |
@@ -19,8 +19,53 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 | Disquette d'origine : BPB à 0 secteur par cluster | `scr_tool.py falcon` reconstruit une disquette FAT12 standard, `F030AUTO.PRG` (même lanceur, résident, pour le dossier `AUTO`) avant le menu `DEBUT.PRG` |
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
-`N` / Alternate (pas de correction 60 Hz) — touches au lancement, ligne de commande ou
+`N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine, sans mode fluide) — touches au lancement, ligne de commande ou
 première ligne de `SCRF030.INF`.
+
+### Mode fluide : 8,33 → 16,3 images/s
+
+Le jeu fait un tour (logique + rendu `$51BCC` + échange d'écran) au plus toutes les 6 VBL
+(compteur `$4EC20` rechargé à 6) : 8,33 images/s sur Falcon (6,5 environ sur ST, dont le rendu
+dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (signature à
+`$4EC24`, `$4B0C2`, nom du circuit, appels `$4AA8C`/`$4AB90`) et :
+
+1. **caches rallumés** : un tour passe de 2,9 à 1,8 VBL ;
+2. **image intermédiaire** : l'appel de l'attente de fin de tour (`jsr $4B0A6`, en `$4AB90`)
+   est détourné. Pendant cette attente, après le rendu normal, le rendu du jeu est rappelé
+   dans un **troisième écran**, caméra (`$10AC2`, 18 octets) et adversaire (pièce, section,
+   position latérale) placés aux k/6 du chemin entre le tour précédent et le tour courant, k
+   étant la VBL où l'image sera visible (3 à 5, prévue d'après la durée mesurée du rendu à
+   l'horloge 200 Hz). L'image est montrée par `$FF8201/03` à la bonne VBL, puis l'attente
+   d'origine reprend.
+   * Le troisième écran ne reçoit de l'image affichée que ce que le rendu ne repeint pas : tout
+     sauf la fenêtre 3D (128 lignes de 128 octets, toujours repeinte d'après 40 rendus
+     relevés), soit 15,6 Ko au lieu de 32.
+   * Les variables que le rendu modifie (`falcon/src/snaptab.s`, 72 zones, 9,9 Ko, produit par
+     `falcon/tools/snaptab.py` à partir de relevés mémoire avant/après rendu et de l'analyse
+     statique des écritures) sont sauvegardées puis rétablies, **sauf** celles qu'écrivent les
+     interruptions (VBL, chrono, clavier) et la pile.
+   * Pas d'image intermédiaire si elle ne peut être prête avant le tour suivant, ou si la
+     caméra saute (grue du départ).
+
+Mesures sous Hatari (`--cpu-exact on`, caches du 68030 émulés), accélérateur enfoncé sur Little
+Ramp : **16,3 images/s** (intervalles de 2 et 4 VBL surtout, 3 pour un sixième). Même partie
+rejouée depuis un instantané, avec et sans le mode fluide : position, vitesse, caméra,
+adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique (`$4EEB0`) :
+**1325 états sur 1325 identiques**, aux mêmes VBL.
+
+**Pourquoi pas le DSP** : profil du 68030 (profileur de Hatari, 10 s de course, mode fluide) :
+
+| Poste | Part du temps |
+|---|---|
+| attente de la VBL (`$4B0A6`) | 26 % |
+| tracé des bords de polygones et remplissages (`$53000`-`$55500`), sprites du cockpit (`$56700`) | ≈ 30 % |
+| copies du mode fluide (avant les réductions ci-dessus) | 15 % |
+| **multiplications et divisions** (rotations, projection) | **1,6 %** |
+| reste du jeu (logique, tri, découpage, tableau de bord) | ≈ 27 % |
+
+Le rendu est limité par les écritures en mémoire. Le DSP n'a pas accès à la mémoire du
+Falcon : tout ce qu'il calcule repasserait mot par mot par le port hôte, au prix de ce qu'on
+voulait gagner. Le déport des calculs 3D rapporterait au mieux 2 %.
 
 ### Tests sous Hatari
 
@@ -38,6 +83,9 @@ données du jeu. Résultats (Hatari 2.6.1, EmuTOS de septembre 2026) :
 | clavier | octets IKBD reçus par le gestionnaire `$118` du jeu à travers la table de relais |
 | disquette | `scr_tool.py falcon` sur une fausse disquette au BPB d'origine ; démarrage : `AUTO\F030AUTO.PRG` → menu → `GAME.PUT` |
 | retour | VBR = 0, `CACR = $3111`, octet `$FF`, mode 640×480 du bureau : rétablis |
+
+(La doublure n'étant pas reconnue comme le jeu, le mode fluide ne s'y enclenche pas : ces
+cas vérifient la préparation de la machine ; le mode fluide est vérifié avec le vrai jeu.)
 
 ### Le vrai jeu
 
@@ -60,8 +108,6 @@ Rien n'a été essayé sur un vrai Falcon.
 Particularité de Hatari : en ST basse sur VGA, la fréquence du VIDEL est mal calculée
 (480 Hz, ramenés à 50) ; un vrai Falcon est à 60 Hz. SCRF030 mesurant la fréquence, il est
 correct dans les deux cas ; la correction 60 Hz est testée en RVB NTSC.
-
-## Pistes suivantes
 
 ## Ce qui ne se porte pas tel quel
 
@@ -118,8 +164,9 @@ vrai Falcon.
   `$4B890` et `$53212`-`$5327C`. Les réécrire suffit pour passer à un autre format d'écran
   (par exemple 256 couleurs en plans entrelacés, ou 16 bits « true colour »), voire à une
   résolution plus haute si la projection est adaptée.
-* **DSP 56001** : les transformations 3D et la projection des points du circuit dans `$51BCC`
-  sont de bons candidats pour un déport sur le DSP.
+* **DSP 56001** : mesuré, les transformations 3D et la projection ne font que 2 % du temps
+  (voir « Mode fluide ») ; un déport n'apporterait presque rien tant que le 68030 écrit
+  lui-même l'écran.
 * **Son** : le moteur est joué par la VBL sur le YM2149. Le DMA son 16 bits du Falcon permet
   de mieux faire.
 

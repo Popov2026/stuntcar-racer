@@ -28,8 +28,9 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     - passe en « ST basse » 320x200 16 couleurs (mode compatible du VIDEL), sur un écran
       à lui de 32 Ko comme en haut de la RAM d'un ST (le chargeur de GAME.PUT se sert de
       la fin de cette zone) ; le mode, l'écran et les palettes sont rétablis au retour ;
-    - coupe les caches du 68030 (le jeu est décompressé puis relogé avant d'être
-      exécuté : avec le cache d'instructions, le 68030 exécuterait d'anciennes données) ;
+    - coupe les caches du 68030 pendant le chargement (le jeu est décompressé puis relogé
+      avant d'être exécuté : avec le cache d'instructions, le 68030 exécuterait d'anciennes
+      données), puis les rallume une fois le jeu en place (voir « mode fluide ») ;
     - déplace la table des vecteurs (registre VBR) vers une table de relais qui renvoie
       chaque exception au vecteur écrit par le jeu en mémoire basse ($70, $118...), ce qui
       permet :
@@ -43,6 +44,22 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     - dirige le son du YM2149 vers le codec du Falcon.
   F030AUTO.PRG fait la même chose depuis le dossier AUTO et reste résident.
 
+  Mode fluide (par défaut) : sur ST, le jeu affiche 6,5 images/s environ ; sur Falcon, sans
+  rien changer, 8,33 : sa logique avance au plus une fois toutes les 6 VBL, et chaque tour
+  donne une image. Quand le jeu installe sa VBL, SCRF030 le reconnaît et :
+    * rallume les caches (un tour de jeu : 1,8 VBL au lieu de 2,9) ;
+    * dessine une image de plus entre deux tours : le rendu du jeu est rappelé avec la
+      caméra et l'adversaire placés entre leur position précédente et la courante, selon
+      l'instant où l'image sera montrée, dans un troisième écran.
+  Résultat sous Hatari (68030 exact, caches émulés) : 16,3 images/s. La logique du jeu
+  n'est pas touchée : ce que le rendu supplémentaire modifie est sauvegardé puis rétabli,
+  et une même partie donne exactement les mêmes états, tour par tour, avec et sans ce mode.
+
+  Le DSP n'est pas utilisé : mesuré au profileur, le calcul 3D (multiplications,
+  divisions, projection) ne pèse que 2 % du temps du 68030 ; c'est le tracé des
+  polygones et l'écriture en mémoire écran qui coûtent, et le DSP n'a pas accès à la
+  mémoire du Falcon (tout devrait repasser par le 68030 via le port hôte).
+
 
 3. Options
 
@@ -51,6 +68,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     Shift      / 8   8 MHz et bus STE (au plus près d'un ST)
     Control    / C   laisser les caches du 68030 tels que le TOS les a mis (déconseillé)
     Alternate  / N   pas de correction 60 Hz
+               O     jeu d'origine : ni image intermédiaire, ni caches rallumés
 
 
 4. Tester sous Hatari (Linux, macOS)

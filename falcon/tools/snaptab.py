@@ -8,8 +8,8 @@ travail) : elles sont remises dans leur état d'avant pour que la logique du jeu
 exactement celle d'origine.
 
 Zones = octets vus modifiés par $51BCC (24 rendus pendant une course sous Hatari : copies
-de la mémoire à l'entrée et au retour, écrans exclus), complétés par des blocs entiers
-autour, MOINS les octets écrits par les interruptions (la VBL du jeu, son chrono, le
+de la mémoire à l'entrée et au retour, écrans exclus ; puis 60 rendus répartis sur 1500 VBL),
+complétés par des blocs entiers autour (marges de 64 à 256 octets), MOINS les octets écrits par les interruptions (la VBL du jeu, son chrono, le
 clavier) et la pile : les restaurer ferait perdre des VBL au chronomètre ou des touches.
 
     python3 snaptab.py [RELEVÉ.txt] > ../src/snaptab.s
@@ -153,7 +153,8 @@ STATIC = """
 56926 6
 56c6c 16
 """
-BLOCKS = [(0x108e0, 0x10c00), (0x56900, 0x56c7c), (0x6ea00, 0x73370)]
+BLOCKS = [(0x108e0, 0x10c00), (0x56900, 0x56c7c), (0x6ea00, 0x6f0ac), (0x6f680, 0x6f7c0),
+          (0x6fd80, 0x6fe00), (0x70280, 0x71700), (0x730c0, 0x73370)]
 # écrits par les interruptions : VBL ($4EC24, chrono $51F38, $4BCC8), clavier ($104B4)
 EXCLUDE = (set(range(0x10200, 0x10400)) | set(range(0x10600, 0x10700)) |
            {0x109c4, 0x109c5, 0x109c6, 0x109c7, 0x109cd, 0x10a1e, 0x10a1f,
