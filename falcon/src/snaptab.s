@@ -1,7 +1,7 @@
 ; snaptab.s - produit par falcon/tools/snaptab.py : zones restaurées après
 ; l'image intermédiaire (adresses du jeu chargé à $10100, longueur en octets)
-; 72 zones, 9941 octets
-SNAP_BYTES	equ	9941
+; 71 zones, 5027 octets
+SNAP_BYTES	equ	5027
 snaptab:
 	dc.l	$108e0,228
 	dc.l	$109c8,5
@@ -70,9 +70,8 @@ snaptab:
 	dc.l	$5662a,1
 	dc.l	$5662c,48
 	dc.l	$56900,892
-	dc.l	$6ea00,1580
+	dc.l	$6ea00,1386
 	dc.l	$6f680,320
-	dc.l	$6fd80,128
-	dc.l	$70280,5248
+	dc.l	$70280,656
 	dc.l	$730c0,688
 	dc.l	0

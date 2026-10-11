@@ -153,6 +153,11 @@ STATIC = """
 56926 6
 56c6c 16
 """
+# tampons de travail que chaque rendu réécrit avant de les lire (bords, listes) : pas à
+# sauvegarder. Vérifié sous Hatari : remplis au hasard à l'entrée et à la sortie de chaque
+# rendu normal, 400 rendus, mêmes images et même partie qu'avec leur contenu réel.
+SCRATCH = (set(range(0x70510, 0x71700)) | set(range(0x6fd80, 0x6fe00)) |
+           set(range(0x6ef6a, 0x6f02c)))
 BLOCKS = [(0x108e0, 0x10c00), (0x56900, 0x56c7c), (0x6ea00, 0x6f0ac), (0x6f680, 0x6f7c0),
           (0x6fd80, 0x6fe00), (0x70280, 0x71700), (0x730c0, 0x73370)]
 # écrits par les interruptions : VBL ($4EC24, chrono $51F38, $4BCC8), clavier ($104B4)
@@ -174,6 +179,7 @@ def main():
     for a, b in BLOCKS:
         keep |= set(range(a, b))
     keep -= EXCLUDE
+    keep -= SCRATCH
     rng = []
     for a in sorted(keep):
         if rng and a == rng[-1][1] + 1:

@@ -730,8 +730,7 @@ interp_wait:
 	subq.w	#3,d0
 	move.w	est_interp,d1
 	move.w	d1,d2
-	add.w	d2,d2
-	addq.w	#4,d2				; (sinon la 2e manquerait : rythme 2/4)
+	add.w	d2,d2				; (si la 2e manque, la 1re est montrée à V0+3)
 	moveq	#2,d7				; deux images ?
 	cmp.w	d0,d2
 	bls.s	.n
@@ -745,6 +744,7 @@ interp_wait:
 	move.b	est_interp+1,dbg_e+1
 	move.b	d7,dbg_e+2
 	endc
+	moveq	#0,d5				; images faites
 	lea	cam_cur,a0
 	lea	cam_prev,a1
 	moveq	#3-1,d2
@@ -762,7 +762,6 @@ interp_wait:
 	add.l	#2*SCREEN_BYTES,a5
 .par:	moveq	#0,d5				; file d'affichage du tour suivant
 	clr.w	stg_ready
-	clr.w	stg_n
 	clr.w	render_aborted
 	move.l	G_DRAW(a6),save_draw
 	move.l	G_WIN(a6),save_win
@@ -809,19 +808,37 @@ interp_wait:
 	bne	.skip				; (et sa durée tronquée ne compte pas)
 	lea	est_interp,a0
 	bsr	estimate
+	tst.w	d5
+	bne.s	.second
 	moveq	#7,d0				; montrée par la VBL qui fait passer le
 	sub.w	d6,d0				; compteur de 7-k à 6-k : V0+k
-	lea	stg_c,a0
-	move.b	d0,(a0,d5.w)
-	move.l	a5,stg_a-stg_c(a0,d5.w*4)
-	addq.w	#1,d5
-	move.w	d5,stg_n
+	cmp.w	#2,d7
+	bne.s	.q0
+	moveq	#4,d0				; deux prévues : en attendant la 2e, à V0+3
+.q0:	lea	stg_q0,a0			; file 0 : cette image seule
+	move.w	#1,(a0)
+	move.b	d0,2(a0)
+	move.l	a5,4(a0)
+	clr.w	stg_q
 	move.w	#1,stg_ready			; à prendre par la VBL qui termine le tour
 	tst.b	G_COUNTER(a6)
 	bne.s	.st1
 	clr.w	stg_ready			; trop tard : fin de tour déjà passée
 	bra.s	.skip
-.st1:	subq.w	#1,d7
+.second:
+	lea	stg_q1,a0			; file 1 : les deux, à V0+2 et V0+4
+	move.w	#2,(a0)
+	move.b	#5,2(a0)
+	move.b	#3,3(a0)
+	move.l	a5,d0
+	sub.l	#SCREEN_BYTES,d0
+	move.l	d0,4(a0)
+	move.l	a5,8(a0)
+	move.w	#1,stg_q			; un seul mot écrit : la VBL prend l'une ou l'autre
+	moveq	#2,d5
+	bra.s	.skip
+.st1:	moveq	#1,d5
+	subq.w	#1,d7
 	beq.s	.skip
 	moveq	#0,d0				; reste-t-il le temps d'une deuxième ?
 	move.b	G_COUNTER(a6),d0		; (si elle déborde, la VBL l'abandonne)
@@ -842,7 +859,7 @@ interp_wait:
 	move.b	dbg_e,(a0)+
 	move.b	dbg_e+1,(a0)+
 	move.b	dbg_e+2,(a0)+
-	move.b	stg_n+1,(a0)
+	move.b	d5,(a0)
 	tst.w	render_aborted
 	beq.s	.d1
 	or.b	#$10,(a0)
@@ -893,12 +910,14 @@ vbl_flip:
 .nab:	clr.w	act_n				; ce qui n'a pas été montré est abandonné
 	tst.w	stg_ready
 	beq.s	.out
-	lea	stg_c,a0
-	lea	act_c,a1
+	lea	stg_q0,a0
+	tst.w	stg_q
+	beq.s	.q
+	lea	stg_q1,a0
+.q:	lea	act_n,a1
 	moveq	#(STG_BYTES/2)-1,d1
 .cp:	move.w	(a0)+,(a1)+
 	dbf	d1,.cp
-	move.w	stg_n,act_n
 	clr.w	act_i
 	clr.w	stg_ready
 	bra.s	.out
@@ -1265,6 +1284,8 @@ chk_m0:		ds.b	32000
 chk_m1:		ds.b	32000
 	endc
 grel_delta:	ds.l	1
+tr_a1:		ds.l	1
+tr_d0:		ds.l	1
 render_sp:	ds.l	1
 abort_pc:	ds.l	1
 in_render:	ds.w	1
@@ -1274,10 +1295,14 @@ turbo_count:	ds.w	1
 ebuf:		ds.l	1
 ebuf_par:	ds.w	1
 stg_ready:	ds.w	1
-stg_n:		ds.w	1
-stg_c:		ds.b	2			; file préparée : valeurs du compteur,
-stg_a:		ds.l	2			;   écrans
-STG_BYTES	equ	10
+stg_q:		ds.w	1			; file préparée : 0 ou 1
+stg_q0:		ds.w	1			; nombre d'images,
+		ds.b	2			;   valeurs du compteur,
+		ds.l	2			;   écrans
+stg_q1:		ds.w	1
+		ds.b	2
+		ds.l	2
+STG_BYTES	equ	12
 act_i:		ds.w	1
 act_n:		ds.w	1
 act_c:		ds.b	2			; file active

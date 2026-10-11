@@ -72,14 +72,35 @@ t_edge:
 	exg	d7,d5
 	exg	d6,d4
 	or.b	#64,(a1,d0.w)
-.down:	move.w	d5,(a2)				; y0 >= y1 : de bas en haut
-	move.w	d7,2(a2)
-	move.w	d4,4(a2)
-	move.w	d6,6(a2)
+.down:	moveq	#0,d0				; comme l'original en $53ACA (mot fort nul)
+	bra	t_trace
+
+; tracé proprement dit ($53ACA, atteint aussi après découpage d'un bord) : d4, d5 =
+; x0, y0 et d6, d7 = x1, y1 (y0 >= y1), a2 = en-tête, a0 = x par ligne ; en-tête y
+; écrit si ($5353A) >= 0 ; après les x, ($53536)+1 fois le mot ($53538) si
+; ($53536) >= 0. a1 et le mot fort de d0 restent ceux de l'entrée, comme l'original.
+t_trace:
 	move.w	d5,d2
 	sub.w	d7,d2				; dy
 	move.w	d4,d1
 	sub.w	d6,d1				; x0 - x1
+	move.w	d1,d3
+	bpl.s	.ab
+	neg.w	d3
+.ab:	cmp.w	#1024,d3			; hors des plages prévues : original
+	bhs	.orig
+	cmp.w	#1024,d2
+	bhs	.orig
+	move.l	a1,tr_a1
+	move.l	d0,tr_d0
+	tst.w	($5353a).l
+	GREL
+	bmi.s	.nh
+	move.w	d5,(a2)				; en-tête
+	move.w	d7,2(a2)
+.nh:	move.w	d4,4(a2)
+	move.w	d6,6(a2)
+	tst.w	d1
 	bpl	.left
 	neg.w	d1				; dx
 	cmp.w	d2,d1
@@ -107,6 +128,12 @@ t_edge:
 	bne.s	.xr
 	bra.s	.xend
 
+.orig:	move.w	d5,d2				; instructions déplacées par le « jmp »
+	sub.w	d7,d2
+	move.w	d4,d1
+	jmp	($53ad0).l
+	GREL
+
 .yr:	move.w	d2,d3				; x croissant, plus haut que large
 	lsr.w	#1,d3
 	not.w	d3
@@ -120,14 +147,20 @@ t_edge:
 .yr2:	dbf	d5,.yr1
 	bra.s	.end
 .xend:	and.b	#$ef,ccr			; X : comme à la sortie du Bresenham d'origine
-.end:	move.w	#$8000,(a0)+
+.end:	move.l	tr_d0,d0
+	move.w	($53536).l,d0			; prolongement du bord (découpage)
+	GREL
+	bmi.s	.nf
+	move.w	($53538).l,d1
+	GREL
+.f:	move.w	d1,(a0)+
+	dbf	d0,.f
+.nf:	move.w	#$8000,(a0)+
 	move.l	a0,($54d00).l
 	GREL
-	move.l	#$702b8,a1
-	GREL
+	move.l	tr_a1,a1
 	move.w	d6,d4				; fin du bord : (x1, y1)
 	move.w	d7,d5
-	move.l	#$ffff,d0			; ($53536) = -1 : rien à prolonger
 	clr.w	d1
 	clr.w	d2
 	rts
@@ -173,7 +206,7 @@ t_edge:
 ; plus large que haut : d1 = dx >= d2 = dy. Erreur d3 = ~(dx/2) comme l'original.
 ; Le j-ième x est x0 +- k_j, k_j = ceil(((j-1)*dx + f)/dy), f = dx/2 + 1 ;
 ; s = k_j*dy - (j-1)*dx - f (0 <= s < dy). Sortie : d0.w = k1, d5.w = s,
-; a1 = fin des dy x. Seuls d0 et a1 servent en entier (refaits à la fin) : les mots
+; a1 = fin des dy x. Seuls d0 et a1 servent en entier (rétablis à la fin) : les mots
 ; forts des autres registres restent ceux de l'original.
 .xprep:	move.w	d1,d3
 	lsr.w	#1,d3
@@ -424,6 +457,9 @@ turbo_tab:
 	elseif
 	dc.l	t_edge
 	endc
+	dc.l	$53aca-$10100
+	dc.w	$3405				; move.w d5,d2
+	dc.l	t_trace
 	dc.l	$56762-$10100
 	dc.w	$2f05				; move.l d5,-(sp)
 	ifd	CHKSPR

@@ -177,6 +177,26 @@ static void gen_sprite(regs_t *r)
 	for (int i = 0; i < 32000; i += 2) w16(scr + i, rint_(0, 3) ? rnd() : 0);
 }
 
+/* --- entrées de $53ACA (tracé, aussi atteint après découpage) --- */
+static void gen_trace(regs_t *r)
+{
+	for (int i = 0; i < 8; i++) { r->d[i] = rnd() << 16 ^ rnd(); r->a[i] = rnd() << 16 ^ rnd(); }
+	r->sr = rnd();
+	int big = rint_(0, 99) < 3;
+	int x0 = big ? rint_(-3000, 3000) : rint_(0, 255), x1 = big ? rint_(-3000, 3000) : rint_(0, 255);
+	int y1 = rint_(0, 127), y0 = big ? y1 + rint_(0, 3000) : rint_(y1, 127);
+	switch (rint_(0, 7)) { case 0: y0 = y1; break; case 1: x1 = x0; break; }
+	r->d[4] = (r->d[4] & 0xffff0000) | (x0 & 0xffff);
+	r->d[6] = (r->d[6] & 0xffff0000) | (x1 & 0xffff);
+	r->d[5] = (r->d[5] & 0xffff0000) | (y0 & 0xffff);
+	r->d[7] = (r->d[7] & 0xffff0000) | (y1 & 0xffff);
+	uint32_t a2 = edge_buf0 + rint_(0, 200) * 2;
+	r->a[2] = a2; r->a[0] = a2 + 8;
+	w16(G(0x5353a), rnd());
+	w16(G(0x53536), rint_(0, 9) < 7 ? 0xffff : rint_(0, 40));
+	w16(G(0x53538), rnd());
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 6) { fprintf(stderr, "usage : bench RAM.bin BASE SCRF030.PRG LISTING ROUTINE [N [GRAINE]]\n"); return 2; }
@@ -209,6 +229,11 @@ int main(int argc, char **argv)
 		orig = G(0x56762);
 		repl = LOADADR + sym(argv[4], "t_sprite", &sec);
 		gen = gen_sprite;
+	} else if (!strcmp(argv[5], "trace")) {
+		orig = G(0x53aca);
+		repl = LOADADR + sym(argv[4], "t_trace", &sec);
+		gen = gen_trace;
+		edge_buf0 = m68k_read_memory_32(G(0x54d00));
 	} else if (!strcmp(argv[5], "edge_all")) {
 		orig = G(0x5353c);
 		repl = LOADADR + sym(argv[4], "t_edge", &sec);
