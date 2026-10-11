@@ -48,13 +48,14 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   rien changer, 8,33 : sa logique avance au plus une fois toutes les 6 VBL, et chaque tour
   donne une image. Quand le jeu installe sa VBL, SCRF030 le reconnaît et :
     * rallume les caches (un tour de jeu : 1,8 VBL au lieu de 2,9) ;
-    * remplace deux routines du jeu par des versions réécrites pour le 68030 (tracé des
+    * remplace des routines du jeu par des versions réécrites pour le 68030 (tracé des
       bords de polygones, sprites du cockpit), au résultat identique octet pour octet ;
-    * dessine une image de plus par tour (deux si le temps le permet) : le rendu du jeu
-      est rappelé avec la caméra et l'adversaire prolongés dans le sens du dernier
-      déplacement, dans un écran à lui, que la VBL affiche à mi-tour.
-  Résultat sous Hatari (68030 exact, caches émulés), voiture en course : une image toutes
-  les 3 VBL, 16,7 images/s, au rythme régulier. La logique du jeu n'est pas touchée : ce
+    * dessine une ou deux images de plus par tour : le rendu du jeu est rappelé avec la
+      caméra et l'adversaire prolongés dans le sens du dernier déplacement, dans des
+      écrans à lui, que la VBL affiche à mi-tour (ou au tiers et aux deux tiers).
+  Résultat sous Hatari (68030 exact, caches émulés), voiture en course : 19,3 images/s
+  (une image toutes les 2 VBL dans un peu plus de la moitié des tours, toutes les 3
+  ailleurs). La logique du jeu n'est pas touchée : ce
   que le rendu supplémentaire modifie est sauvegardé puis rétabli, et une même partie
   donne exactement les mêmes états, tour par tour, avec et sans ce mode.
 

@@ -23,7 +23,7 @@ Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches 
 les routines réécrites) — touches au lancement, ligne de commande ou
 première ligne de `SCRF030.INF`.
 
-### Mode fluide : 8,33 → 16,7 images/s
+### Mode fluide : 8,33 → 19,3 images/s
 
 Le jeu fait un tour (logique + rendu `$51BCC` + échange d'écran) au plus toutes les 6 VBL
 (compteur `$4EC20` rechargé à 6) : 8,33 images/s sur Falcon (6,5 environ sur ST, dont le rendu
@@ -39,15 +39,22 @@ dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (
    3/6 de tour, ou de 2/6 et 4/6, dans le sens N-1 → N, dans quatre écrans à nous (deux par
    tour, en alternance). Une file préparée pendant le tour devient active à la VBL qui le
    termine ; la VBL affiche ensuite chaque image à V0+3, ou V0+2 et V0+4 (`$FF8201/03`).
+   Deux images sont tentées dès que deux fois la durée mesurée tient dans le temps restant ;
+   en attendant la seconde, la première est déjà en file à V0+3 (la VBL bascule d'une file à
+   l'autre sur un seul mot) : si la seconde ne tient pas, le rythme reste 3/3.
    Interpoler entre N-1 et N n'aurait permis de montrer l'image qu'à V0+4 au mieux (elle ne
    peut être dessinée qu'après le rendu normal) : rythme 4/2.
-   * L'écran supplémentaire ne reçoit de l'image du tour que ce que le rendu ne repeint pas :
-     tout sauf la fenêtre 3D (128 lignes de 128 octets, toujours repeinte d'après 40 rendus
-     relevés), soit 15,6 Ko au lieu de 32.
-   * Les variables que le rendu modifie (`falcon/src/snaptab.s`, 72 zones, 9,9 Ko, produit par
+   * L'écran supplémentaire ne reçoit de l'image du tour que ce que le rendu ne repeint pas et
+     qui change : la fenêtre 3D (128 lignes de 128 octets) est toujours entièrement repeinte
+     (40 rendus relevés), et hors d'elle seuls changent d'un tour à l'autre le haut du cadre
+     (lignes 0-15) et le bas entre les montants (lignes 144-199, octets 16-143) : 9,7 Ko par
+     image, le reste (15,6 Ko) à la 1re utilisation de l'écran puis une fois sur 8.
+   * Les variables que le rendu modifie (`falcon/src/snaptab.s`, 71 zones, 5,0 Ko, produit par
      `falcon/tools/snaptab.py` à partir de relevés mémoire avant/après rendu et de l'analyse
      statique des écritures) sont sauvegardées puis rétablies, **sauf** celles qu'écrivent les
-     interruptions (VBL, chrono, clavier) et la pile.
+     interruptions (VBL, chrono, clavier), la pile, et les tampons de travail que chaque rendu
+     réécrit avant de les lire (bords `$70510`-`$716FF`, `$6FD80`, `$6EF6A`) : vérifié en les
+     remplissant au hasard avant et après chacun de 400 rendus, mêmes images.
    * Nombre d'images d'après le temps restant et leur durée mesurée (horloge 200 Hz) ; aucune
      si la caméra saute (grue). **Sûreté** : si une image n'est pas finie quand le tour se
      termine, la VBL détourne son retour d'interruption vers une routine qui abandonne le
@@ -55,11 +62,12 @@ dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (
      écrans à la même VBL que l'original.
 
 Mesures sous Hatari (`--cpu-exact on`, caches du 68030 émulés), accélérateur enfoncé sur Little
-Ramp, voiture en course : **une image toutes les 3 VBL, 16,7 images/s** (une image extrapolée
-par tour presque toujours ; deux, pour 25 images/s, demanderaient une image en 30 ms au lieu de
-35 à 45). Même partie rejouée depuis un instantané, avec et sans le mode fluide : position,
-vitesse, caméra, adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique
-(`$4EEB0`) : **tous les états identiques, aux mêmes VBL** (1266 sur 1266).
+Ramp, voiture en course : **19,3 images/s** (une image toutes les 2 VBL dans un peu plus de la
+moitié des tours, toutes les 3 VBL ailleurs ; une image extrapolée coûte 35 à 45 ms, et il en
+faudrait au plus 35 ms pour en mettre deux dans chaque tour, soit 25 images/s). Même partie
+rejouée depuis un instantané, avec et sans le mode fluide : position, vitesse, caméra,
+adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique (`$4EEB0`) : **tous
+les états identiques, aux mêmes VBL** (1357 sur 1357).
 
 ### Routines réécrites pour le 68030
 
@@ -71,6 +79,7 @@ d'origine avant toute écriture. Option `T` : sans elles.
 | Routine | Original | Réécrite |
 |---|---|---|
 | `$5353C` tracé d'un bord de polygone (12 % du temps) | Bresenham pas à pas en x : 5 instructions par pixel pour les bords plus larges que hauts | un pas par ligne : x = x0 ± ⌈((j-1)·dx + f)/dy⌉, f = dx/2+1, en q ou q+1 (dx = q·dy + r) ; erreur finale et extrémités démontrées identiques ; 2 fois moins d'instructions |
+| `$53ACA` même tracé après découpage d'un bord | idem | idem, avec l'en-tête conditionnel (`$5353A`) et le prolongement du bord (`$53536`/`$53538`) ; `a1` et le mot fort de `d0` conservés |
 | `$56762` sprite masqué du cockpit | lecture + écriture de l'écran pour chaque bloc de 16 pixels | bloc opaque (masque nul) : écrit sans lire ; masque plein et plans nuls : rien ; ≈ 27 % d'accès en moins |
 
 Vérification :
@@ -79,7 +88,7 @@ Vérification :
   réécrite sur une copie de la mémoire prise en course, entrées au hasard (registres, sommets
   dans et hors de la fenêtre, table pleine, fond d'écran), comparaison de toute la mémoire et
   des registres : 300 000 bords, **toutes les pentes** (dx 0-255, dy 0-127, deux sens, deux
-  ordres : 131 072 cas), 5 000 sprites — aucune différence ;
+  ordres : 131 072 cas), 30 000 tracés après découpage, 5 000 sprites — aucune différence ;
 * dans le jeu sous Hatari, variante de contrôle (`-DSELFCHECK=1 -DCHKEDGE=1` ou `-DCHKSPR=1`) :
   chaque appel réel exécute l'original puis la réécrite sur les mêmes entrées et compare
   registres, CCR et mémoire : 40 941 bords et 1 108 sprites d'une course, **aucun écart**.
