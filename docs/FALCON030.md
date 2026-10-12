@@ -21,8 +21,13 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
 `N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine, sans mode fluide), `T` (sans
-les routines réécrites) — touches au lancement, ligne de commande ou
-première ligne de `SCRF030.INF`.
+les routines réécrites), `I` (sans images extrapolées), `K` (caches coupés) — touches au
+lancement, ligne de commande ou première ligne de `SCRF030.INF`.
+
+Commandes : celles du jeu sur ST, au **joystick** (port 1) pour les menus (haut/bas, bouton ;
+Espace fait aussi office de bouton) comme pour la course ; le clavier ne sert qu'au nom. Sous
+Hatari, il faut l'émulation du joystick par le clavier sur le port 1 (`--joystick 1`, ou F12 >
+Joysticks > « Use keyboard ») : flèches et Ctrl droit. Sans elle, ni menus ni direction.
 
 ### Mode fluide : 8,33 → 20,5 images/s
 
@@ -61,6 +66,13 @@ dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (
      termine, la VBL détourne son retour d'interruption vers une routine qui abandonne le
      rendu, rétablit l'état et rend la main au jeu à temps — le jeu échange donc toujours ses
      écrans à la même VBL que l'original.
+   * **Bogue corrigé** (version du 12/10) : la reconnaissance du jeu, faite dans la VBL quand
+     il installe la sienne, modifiait le registre a1 sans le rendre. Si la VBL tombait dans la
+     boucle du jeu qui recopie le tableau des pilotes par a1 (`$49E0C`), ce tableau
+     (« -------- ») était écrit dans le code du lanceur (`set_extrap`) : images extrapolées
+     fausses, partie qui dérape (collisions, adversaire figé, plus de direction), plantage.
+     Selon l'adresse de chargement, donc le mode de lancement (.TOS ou .PRG), la boucle était
+     touchée ou non.
 
 Mesures sous Hatari (`--cpu-exact on`, caches du 68030 émulés), accélérateur enfoncé sur Little
 Ramp, voiture en course : **20,5 images/s** en moyenne sur quatre alignements du jeu en mémoire

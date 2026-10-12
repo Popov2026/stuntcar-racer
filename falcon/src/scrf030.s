@@ -47,6 +47,8 @@
 ;   N / Alternate  pas de correction 60 Hz
 ;   O              jeu d'origine : ni image intermédiaire, ni caches
 ;   T              sans les routines réécrites pour le 68030 (turbo.s)
+;   I              sans images extrapolées (caches et turbo.s gardés)
+;   K              caches du 68030 coupés (images extrapolées et turbo.s gardées)
 ;
 ; Assemblage : vasmm68k_mot -Ftos -m68030 -devpac -nosym -o SCRF030.PRG scrf030.s
 ; Variante dossier AUTO (reste résidente, ne lance rien, ne rétablit rien) :
@@ -65,6 +67,8 @@ OPT_CACHE	equ	1
 OPT_NO60	equ	2
 OPT_ORIG	equ	3
 OPT_NOTURBO	equ	4
+OPT_NOINTERP	equ	5
+OPT_NOCACHE	equ	6
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -270,8 +274,14 @@ parse_options:
 	bne.s	.noto
 	bset	#OPT_ORIG,d4
 .noto:	cmp.b	#'T',d0
-	bne.s	.next
+	bne.s	.notb
 	bset	#OPT_NOTURBO,d4
+.notb:	cmp.b	#'I',d0
+	bne.s	.noti
+	bset	#OPT_NOINTERP,d4
+.noti:	cmp.b	#'K',d0
+	bne.s	.next
+	bset	#OPT_NOCACHE,d4
 .next:	dbf	d1,.loop
 .eol:	rts
 
@@ -649,8 +659,10 @@ vbl_hook:
 	rts
 
 ; le vecteur $70 pointe-t-il sur la VBL du jeu ? (vérifié une fois par valeur du vecteur)
+; Appelée dans l'interruption : tous les registres touchés sont rendus (a1 compris, sinon
+; le jeu, interrompu dans une boucle de copie par a1, écrivait dans le lanceur).
 detect_game:
-	movem.l	d0/a0,-(sp)
+	movem.l	d0/a0-a1,-(sp)
 	move.l	$70.w,d0
 	cmp.l	last_vbl70,d0
 	beq	.no
@@ -685,16 +697,21 @@ detect_game:
 	move.l	a0,game_base
 	move.w	#1,game_ok
 	btst	#OPT_ORIG,options+1
-	bne.s	.no
+	bne	.no
 	tst.w	is_030
 	beq.s	.nocache
+	btst	#OPT_NOCACHE,options+1
+	bne.s	.nocache
 	move.l	cache_on_value,d0		; le jeu est en place : caches allumés
 	movec	d0,cacr
 	move.w	#1,icache_on
 .nocache:
 	clr.w	have_prev
+	btst	#OPT_NOINTERP,options+1
+	bne.s	.nointerp
 	move.l	#interp_wait,G_WAITCALL+2(a0)	; jsr interp_wait
 	move.w	#1,interp_on
+.nointerp:
 	bsr	turbo_reloc			; adresses du jeu dans turbo.s
 	tst.w	icache_on			; code que le jeu modifie : cache vidé
 	beq.s	.nocc
@@ -717,7 +734,7 @@ detect_game:
 	movec	cacr,d0
 	bset	#3,d0				; code modifié : vider le cache d'instructions
 	movec	d0,cacr
-.no:	movem.l	(sp)+,d0/a0
+.no:	movem.l	(sp)+,d0/a0-a1
 	rts
 
 ; ---------------------------------------------------------------------------

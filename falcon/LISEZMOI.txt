@@ -59,6 +59,20 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   (une image toutes les 2 VBL dans environ la moitié des tours, toutes les 3 ailleurs). La logique du jeu n'est pas touchée : ce
   que le rendu supplémentaire modifie est sauvegardé puis rétabli, et une même partie
   donne exactement les mêmes états, tour par tour, avec et sans ce mode.
+  (Corrigé le 12/10 : la reconnaissance du jeu, faite dans l'interruption VBL, abîmait un
+  registre ; selon l'instant, le jeu recopiait alors son tableau des pilotes dans le code
+  de SCRF030 : collisions au hasard, adversaire figé, voiture qui ne tourne plus, plantage.
+  Les versions précédentes sont à remplacer.)
+
+  Commandes du jeu (celles de l'Atari ST) : tout se fait au JOYSTICK (port 1), le clavier
+  ne sert qu'à saisir son nom et, sur l'écran du cracker, à passer avec Espace.
+    menus       joystick haut/bas pour choisir, bouton pour valider (Espace aussi)
+    course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
+    après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)
+  Sous Hatari, le joystick doit être émulé par le clavier sur le port 1 : option
+  --joystick 1, ou F12 > Joysticks > Joystick 1 > « Use keyboard ». Flèches = joystick,
+  Ctrl droit = bouton. Sans cela, les flèches arrivent au jeu comme des touches, qu'il
+  ignore : on ne peut ni choisir dans les menus ni tourner.
 
   Le DSP n'est pas utilisé, ni pour la 3D ni pour le son, parce qu'il ne ferait rien
   gagner (mesuré au profileur de Hatari) :
@@ -78,6 +92,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     Alternate  / N   pas de correction 60 Hz
                O     jeu d'origine : ni image intermédiaire, ni caches rallumés
                T     sans les routines réécrites (mode fluide quand même)
+               I     sans images extrapolées (caches et routines réécrites gardés)
+               K     caches du 68030 coupés (images extrapolées et routines gardées)
 
 
 4. Tester sous Hatari (Linux, macOS)
