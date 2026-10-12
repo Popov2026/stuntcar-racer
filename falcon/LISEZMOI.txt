@@ -104,6 +104,12 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   Essayé avec la disquette « Compact Disk 2.1 » : jusqu'à la course, en VGA et en RVB,
   depuis le disque dur et depuis la disquette Falcon.
 
+  Adressage : le chargeur JEK de GAME.PUT écrit la palette en $0FFF8240, qui n'est
+  $FF8240 qu'en adressage 24 bits (Falcon d'origine, Hatari par défaut). En 32 bits
+  (Hatari avec TT-RAM ou « 24-bit addressing » décoché, cartes accélératrices), SCRF030
+  le détecte et l'explique au lieu de lancer le jeu : cocher 24-bit addressing
+  (--addr24 on) et retirer la TT-RAM.
+
   Remarque : en ST basse sur VGA, Hatari calcule mal la fréquence du VIDEL et tourne à
   50 Hz au lieu de 60 ; SCRF030 mesure la fréquence, il ne corrige donc rien dans ce cas.
   La correction 60 Hz se teste en RVB NTSC (option -n de hatari_falcon.sh).

@@ -135,7 +135,13 @@ start:	move.l	4(sp),a5			; basepage
 	bra	quit
 
 .falcon:
-	move.w	#89,-(sp)			; Vmontype
+	tst.w	addr32
+	beq.s	.a24
+	lea	txt_addr32(pc),a0		; le chargeur du jeu planterait
+	bsr	print
+	bsr	wait_key
+	bra	quit
+.a24:	move.w	#89,-(sp)			; Vmontype
 	trap	#14
 	addq.l	#2,sp
 	move.w	d0,montype
@@ -323,7 +329,20 @@ read_cookies:
 	bne.s	.loop
 	move.l	d1,cpu_cookie
 	bra.s	.loop
-.done:	rts
+.done:
+; adressage 24 bits ? Le chargeur JEK de GAME.PUT écrit la palette en $0FFF8240, qui
+; n'est $FF8240 que si les 8 bits forts de l'adresse sont ignorés (Falcon d'origine,
+; Hatari par défaut). En 32 bits (TT-RAM, cartes accélératrices) : erreur de bus.
+	clr.w	addr32
+	move.l	$8.w,a1
+	move.l	sp,a2
+	move.l	#.berr,$8.w
+	tst.w	$0fff8240
+	bra.s	.a24
+.berr:	move.l	a2,sp				; cadre d'exception abandonné
+	move.w	#1,addr32
+.a24:	move.l	a1,$8.w
+	rts
 
 ; ---------------------------------------------------------------------------
 ; mode ST basse sur notre écran ; d0 < 0 en cas d'échec
@@ -1238,6 +1257,12 @@ txt_oo:	dc.b	" origine",0
 txt_ot:	dc.b	" sans-turbo",0
 txt_crlf:
 	dc.b	13,10,0
+txt_addr32:
+	dc.b	"Adressage 32 bits : le chargeur du jeu",13,10
+	dc.b	"(JEK Packer) ecrit en $0FFF8240, qui n'existe",13,10
+	dc.b	"qu'en adressage 24 bits (Falcon d'origine).",13,10
+	dc.b	"Sous Hatari : cocher 24-bit addressing",13,10
+	dc.b	"(--addr24 on) et retirer la TT-RAM.",13,10,0
 txt_notfalcon:
 	dc.b	"Pas de VIDEL : lancement direct.",13,10,0
 txt_mono:
@@ -1279,6 +1304,7 @@ basepage:	ds.l	1
 keep_size:	ds.l	1
 options:	ds.w	1
 is_falcon:	ds.w	1
+addr32:		ds.w	1
 montype:	ds.w	1
 snd_cookie:	ds.l	1
 cpu_cookie:	ds.l	1

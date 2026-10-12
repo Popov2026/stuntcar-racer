@@ -15,6 +15,7 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 | Logique, chrono et son moteur cadencés par la VBL (8,33 ticks/s à 50 Hz) : 20 % trop rapides à 60 Hz | table des vecteurs déplacée (`VBR`) vers des relais `move.l (n*4).w,-(sp) ; rts` ; à 60 Hz, le relais de la VBL ne transmet que 5 VBL sur 6. La fréquence est **mesurée** (horloge 200 Hz) |
 | `move sr,<ea>` privilégiée sur 68010+ | violation de privilège : `move sr,Dn` et `move sr,-(a7)` émulés en mode utilisateur, sinon renvoi au vecteur du TOS |
 | La physique lit l'octet `$FF` (`move.b $FF.l,d0` en `$49718`, au lieu de `#$FF`) : octet faible du vecteur 63, différent sur chaque TOS (EmuTOS : `$02`) | le CPU lisant la table déplacée, l'octet `$FF` reçoit la valeur voulue `$FF` (rétabli au retour) |
+| Le chargeur JEK écrit la palette en `$0FFF8240` : ce n'est `$FF8240` qu'en adressage 24 bits (8 bits forts ignorés, Falcon d'origine) ; en 32 bits (Hatari avec TT-RAM, cartes accélératrices), erreur de bus | lecture d'essai en `$0FFF8240` au lancement : en cas d'erreur de bus, message (« cocher 24-bit addressing ») au lieu de lancer le jeu |
 | Son YM2149 | PSG dirigé vers l'ADC puis l'additionneur du codec (`Soundcmd`) |
 | Disquette d'origine : BPB à 0 secteur par cluster | `scr_tool.py falcon` reconstruit une disquette FAT12 standard, `F030AUTO.PRG` (même lanceur, résident, pour le dossier `AUTO`) avant le menu `DEBUT.PRG` |
 
