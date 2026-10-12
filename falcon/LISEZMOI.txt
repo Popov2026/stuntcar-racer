@@ -10,7 +10,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     python3 tools/scr_tool.py falcon Stunt_Car_Racer.st falcon_out
 
   produit :
-    falcon_out/SCR/          pour le disque dur : GAME.PUT, HIGHSCOR.ES, SCRF030.PRG, SCRF030.INF
+    falcon_out/SCR/          pour le disque dur : GAME.PUT, HIGHSCOR.ES, SCRF030.PRG (aussi
+                             nommé SCRF030.TOS), SCRF030.INF
     falcon_out/SCR_F030.ST   disquette Falcon : tout le contenu de la disquette d'origine,
                              AUTO\F030AUTO.PRG placé avant le menu AUTO\DEBUT.PRG,
                              SCRF030.PRG à la racine, secteur de démarrage (BPB) standard
@@ -21,7 +22,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
 
 2. Lancer
 
-  Disque dur : double-clic sur SCRF030.PRG (moniteur couleur : RVB, TV ou VGA).
+  Disque dur : double-clic sur SCRF030.PRG ou SCRF030.TOS (moniteur couleur : RVB, TV ou VGA).
+  Sous Hatari : « hatari --machine falcon --cpu-exact on SCR/SCRF030.TOS » le lance directement.
   Disquette  : démarrer le Falcon sur SCR_F030.ST, puis choisir STUNTCAR dans le menu.
 
   SCRF030.PRG :

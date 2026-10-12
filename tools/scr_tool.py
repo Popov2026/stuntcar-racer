@@ -513,6 +513,8 @@ def falcon_kit(img, outdir):
     for k in keep:
         open(os.path.join(hd, k.split('/')[-1].upper()), 'wb').write(files[k])
     open(os.path.join(hd, 'SCRF030.PRG'), 'wb').write(launcher)
+    # même programme en .TOS (sans GEM) : « hatari SCR/SCRF030.TOS » le lance directement
+    open(os.path.join(hd, 'SCRF030.TOS'), 'wb').write(launcher)
     open(os.path.join(hd, 'SCRF030.INF'), 'wb').write(FALCON_INF)
 
     # 2. disquette : tout le contenu d'origine, F030AUTO.PRG en tête du dossier AUTO
@@ -523,7 +525,7 @@ def falcon_kit(img, outdir):
     st, spt = fat12_best_fit(ordered)
     stpath = os.path.join(outdir, 'SCR_F030.ST')
     open(stpath, 'wb').write(st)
-    print('disque dur :', hd, '(lancer SCRF030.PRG)')
+    print('disque dur :', hd, '(lancer SCRF030.PRG ou SCRF030.TOS)')
     print('disquette  :', stpath, '(%d secteurs/piste ; démarrer dessus)' % spt)
 
 # --------------------------------------------------------------------------- CLI
