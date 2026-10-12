@@ -87,6 +87,11 @@ G_OPP_PIECE	equ	$10907-$10100		; adversaire : pièce,
 G_OPP_SEC	equ	$108f6-$10100		;   section.fraction,
 G_OPP_LAT	equ	$109d6-$10100		;   position en travers
 G_END		equ	$73370-$10100		; fin de la BSS du jeu
+G_PIECE_TYPE	equ	$10ce6-$10100		; type de chaque pièce du circuit (bits 0-3)
+G_TYPE_TAB	equ	$13670-$10100		; données des types de pièce
+G_NPIECES	equ	$11114-$10100		; nombre de pièces du circuit
+G_JOY		equ	$106a6-$10100		; joystick (lu par le jeu, écrit par son $118)
+G_KEYS		equ	$6f02c-$10100		; touches enfoncées ($B3), par code clavier
 CAM_JUMP	equ	$02000000		; écart (x, y ou z) au-delà duquel la caméra a sauté
 
 ; Vsetmode
@@ -639,7 +644,10 @@ vbl_hook:
 	tst.w	game_ok
 	bne.s	.ready
 	bsr	detect_game
-.ready:	tst.w	icache_on
+.ready:	tst.w	game_ok
+	beq.s	.nokj
+	bsr	kbd_joy
+.nokj:	tst.w	icache_on
 	beq.s	.nofl
 	move.l	d0,-(sp)
 	movec	cacr,d0
@@ -656,6 +664,42 @@ vbl_hook:
 	beq.s	.go
 	bsr	vbl_flip
 .go:	move.l	$70.w,-(sp)
+	rts
+
+; flèches du clavier = joystick (Espace = tir) : le jeu ne se pilote qu'au joystick, et
+; sans joystick (Hatari sans émulation, Falcon sans manette) on ne pouvait ni tourner ni
+; choisir dans les menus. La table des touches tenue par le jeu donne l'état ; on écrit
+; le joystick du jeu (format de son $118 : directions et tir en bit 4, inversés) tant
+; qu'une de ces touches est enfoncée, et une fois au relâchement : un vrai joystick
+; garde la main le reste du temps.
+kbd_joy:
+	movem.l	d0-d1/a0,-(sp)
+	move.l	game_base,a0
+	lea	G_KEYS(a0),a0
+	moveq	#0,d0
+	cmp.b	#$b3,$48(a0)			; haut
+	bne.s	.k1
+	or.b	#1,d0
+.k1:	cmp.b	#$b3,$50(a0)			; bas
+	bne.s	.k2
+	or.b	#2,d0
+.k2:	cmp.b	#$b3,$4b(a0)			; gauche
+	bne.s	.k3
+	or.b	#4,d0
+.k3:	cmp.b	#$b3,$4d(a0)			; droite
+	bne.s	.k4
+	or.b	#8,d0
+.k4:	cmp.b	#$b3,$39(a0)			; Espace : tir
+	bne.s	.k5
+	or.b	#$10,d0
+.k5:	move.b	kj_prev,d1
+	move.b	d0,kj_prev
+	or.b	d0,d1
+	beq.s	.out
+	not.b	d0
+	move.l	game_base,a0
+	move.b	d0,G_JOY(a0)
+.out:	movem.l	(sp)+,d0-d1/a0
 	rts
 
 ; le vecteur $70 pointe-t-il sur la VBL du jeu ? (vérifié une fois par valeur du vecteur)
@@ -829,9 +873,9 @@ interp_wait:
 	add.l	#2576,d0			; comme $10824 : fenêtre 3D
 	move.l	d0,G_WIN(a6)
 	movem.l	d5-d7/a5,-(sp)
-	movem.l	16(sp),d0-d7/a0-a6		; registres du jeu à l'appel
 	move.l	sp,render_sp
 	move.l	#.rendered,abort_pc
+	movem.l	16(sp),d0-d7/a0-a6		; registres du jeu à l'appel
 	move.w	#1,in_render			; la VBL qui finit le tour l'interrompt
 	jsr	([render_addr])
 .rendered:
@@ -1057,7 +1101,7 @@ set_extrap:
 .pos:	move.l	(a1)+,d1
 	move.l	d1,d0
 	sub.l	(a0)+,d0
-	bsr.s	.frac
+	bsr	.frac
 	add.l	d1,d0
 	move.l	d0,(a2)+
 	dbf	d2,.pos
@@ -1066,37 +1110,99 @@ set_extrap:
 	move.w	d1,d0
 	sub.w	(a0)+,d0
 	ext.l	d0
-	bsr.s	.frac
+	bsr	.frac
 	add.w	d1,d0
 	move.w	d0,(a2)+
 	dbf	d2,.ang
-	move.w	(a0)+,d0			; adversaire : sur la même pièce seulement
-	cmp.w	(a1)+,d0
-	bne.s	.done
-	move.w	(a1)+,d1			; section.fraction : sans changer de section
-	moveq	#0,d0
-	move.w	d1,d0
+;
+;
+; adversaire : pièce et section.fraction (octet fort : section de la pièce). Le rendu le
+; dessine à la position qu'il avait en entrant, puis le fait avancer d'un tour ($5079C) :
+; ce qu'on relève après le rendu N est donc la position du rendu N+1, et celle relevée
+; après le rendu N-1 est celle dessinée au tour N. L'image à k/6 le place entre les deux :
+; position du tour précédent + avance x k/6, en passant à la pièce suivante au-delà de
+; la dernière section, comme le jeu ($5081E).
+	movem.l	d5-d7,-(sp)
+	move.b	(a0),d6				; pièce relevée en N-1 (dessinée en N)
+	move.b	(a1),d7				; pièce relevée en N
 	moveq	#0,d4
-	move.w	(a0)+,d4
+	move.w	2(a0),d4
+	moveq	#0,d5
+	move.w	2(a1),d5
+	move.l	d5,d0
 	sub.l	d4,d0
-	bsr.s	.frac
-	add.w	d1,d0
-	move.w	d0,d4
-	eor.w	d1,d4
-	and.w	#$ff00,d4
-	bne.s	.sec
-	move.w	d0,G_OPP_SEC(a6)
-.sec:	move.w	(a1)+,d1
-	move.w	d1,d0
-	sub.w	(a0)+,d0
+	cmp.b	d6,d7
+	beq.s	.adv
+	move.b	d6,d1				; pièce suivante seulement
+	bsr	next_piece
+	cmp.b	d1,d7
+	bne.s	.opp_no
+	move.b	d6,d1
+	bsr	piece_len			; avance = N + longueur(N-1) - (N-1)
+	lsl.l	#8,d0
+	add.l	d5,d0
+	sub.l	d4,d0
+.adv:	bmi.s	.opp_no				; en arrière ou trop grande : rien
+	cmp.l	#$800,d0
+	bhi.s	.opp_no
+	bsr	.frac
+	add.l	d0,d4				; position dessinée + avance x k/6
+	move.b	d6,d1
+	bsr	piece_len
+	move.w	d4,d2
+	lsr.w	#8,d2
+	move.b	d6,d1
+	cmp.w	d0,d2
+	blo.s	.same
+	lsl.w	#8,d0				; au-delà de la pièce : pièce suivante
+	sub.w	d0,d4
+	bsr	next_piece
+.same:	move.b	d1,G_OPP_PIECE(a6)
+	move.w	d4,G_OPP_SEC(a6)
+	move.w	4(a0),d1			; position en travers : de même
+	move.w	4(a1),d0
+	sub.w	d1,d0
 	ext.l	d0
-	bsr.s	.frac
+	bsr	.frac
 	add.w	d1,d0
 	move.w	d0,G_OPP_LAT(a6)
+.opp_no:
+	movem.l	(sp)+,d5-d7
 .done:	rts
 .frac:	muls.l	d3,d0				; d0 = d0 * k / 6 (écarts < $02000000 : pas de débordement)
 	divs.l	#6,d0
 	rts
+
+; nombre de sections de la pièce d1.b -> d0.w (comme $4D3D2 et $4D4D6 : type de la
+; pièce, données du type, octet de longueur / 2 - 1) ; d2/a2 détruits
+piece_len:
+	moveq	#0,d2
+	move.b	d1,d2
+	lea	G_PIECE_TYPE(a6),a2
+	move.b	(a2,d2.w),d2
+	and.w	#$0f,d2
+	add.w	d2,d2
+	lea	G_TYPE_TAB(a6),a2
+	move.w	(a2,d2.w),d0
+	rol.w	#8,d0				; mot petit-boutiste (6502)
+	sub.w	#$b100,d0
+	and.l	#$ffff,d0
+	lea	(a2,d0.l),a2
+	moveq	#0,d2
+	move.b	(a2),d2
+	moveq	#0,d0
+	move.b	(a2,d2.w),d0
+	lsr.w	#1,d0
+	subq.w	#1,d0
+	rts
+
+; pièce suivante de d1.b (dernière -> 0)
+next_piece:
+	addq.b	#1,d1
+	cmp.b	G_NPIECES(a6),d1
+	blo.s	.ok
+	moveq	#0,d1
+.ok:	rts
 
 ; image du tour N (écran de travail du jeu) -> écran a1 : le tableau de bord y est à jour
 copy_frame:
@@ -1355,6 +1461,8 @@ wait_addr:	ds.l	1
 cache_on_value:	ds.l	1
 icache_on:	ds.w	1
 interp_on:	ds.w	1
+kj_prev:	ds.b	1
+		even
 have_prev:	ds.w	1
 last_call:	ds.l	1
 interp_count:	ds.l	1

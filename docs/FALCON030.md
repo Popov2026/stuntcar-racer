@@ -24,10 +24,11 @@ Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches 
 les routines réécrites), `I` (sans images extrapolées), `K` (caches coupés) — touches au
 lancement, ligne de commande ou première ligne de `SCRF030.INF`.
 
-Commandes : celles du jeu sur ST, au **joystick** (port 1) pour les menus (haut/bas, bouton ;
-Espace fait aussi office de bouton) comme pour la course ; le clavier ne sert qu'au nom. Sous
-Hatari, il faut l'émulation du joystick par le clavier sur le port 1 (`--joystick 1`, ou F12 >
-Joysticks > « Use keyboard ») : flèches et Ctrl droit. Sans elle, ni menus ni direction.
+Commandes : le jeu se pilote au **joystick** (port 1), menus compris (sa routine de lecture
+des touches, `$46DAC`, traduit le joystick en codes de flèches). SCRF030 ajoute le clavier :
+à chaque VBL, la table des touches du jeu (`$6F02C`, `$B3` = enfoncée) donne flèches et
+Espace, écrits dans le joystick du jeu (`$106A6`, format de son `$118`) tant qu'une de ces
+touches est enfoncée. Sous Hatari, sans émulation du joystick comme avec `--joystick 1`.
 
 ### Mode fluide : 8,33 → 20,5 images/s
 
@@ -66,6 +67,18 @@ dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (
      termine, la VBL détourne son retour d'interruption vers une routine qui abandonne le
      rendu, rétablit l'état et rend la main au jeu à temps — le jeu échange donc toujours ses
      écrans à la même VBL que l'original.
+   * **Adversaire** : sa position est « pièce, section.fraction » (`$10907`, `$108F6`, octet
+     fort = section) ; il avance d'environ 0,85 section par tour et change de pièce tous les
+     3 ou 4 tours. Le rendu le dessine à la position qu'il a en entrant, puis le fait avancer
+     d'un tour (`$5079C`, `$5081E`) : la position relevée après le rendu N est celle du rendu
+     N+1, celle relevée après N-1 est celle dessinée en N. L'image à k/6 le place entre les
+     deux : position de N-1 + avance × k/6 (longueur de la pièce ajoutée s'il en a changé),
+     pièce suivante au-delà de la dernière section (nombre de sections : type de la pièce
+     `$10CE6`, données `$13670`, comme `$4D3D2`/`$4D4D6`). Mesuré sous Hatari, image par
+     image depuis la mémoire vidéo : taille et position de l'adversaire progressent sans
+     retour en arrière. (Avant le 12/10 : prolongé seulement sans changement de section,
+     soit 15 % des tours, et à partir de la position du tour suivant ; il avançait et
+     reculait d'une image à l'autre.)
    * **Bogue corrigé** (version du 12/10) : la reconnaissance du jeu, faite dans la VBL quand
      il installe la sienne, modifiait le registre a1 sans le rendre. Si la VBL tombait dans la
      boucle du jeu qui recopie le tableau des pilotes par a1 (`$49E0C`), ce tableau

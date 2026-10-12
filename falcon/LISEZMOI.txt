@@ -64,15 +64,14 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   de SCRF030 : collisions au hasard, adversaire figé, voiture qui ne tourne plus, plantage.
   Les versions précédentes sont à remplacer.)
 
-  Commandes du jeu (celles de l'Atari ST) : tout se fait au JOYSTICK (port 1), le clavier
-  ne sert qu'à saisir son nom et, sur l'écran du cracker, à passer avec Espace.
-    menus       joystick haut/bas pour choisir, bouton pour valider (Espace aussi)
+  Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
+  clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
+  en course (un vrai joystick marche toujours).
+    menus       haut/bas pour choisir, bouton (ou Espace) pour valider ; nom au clavier
     course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
     après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)
-  Sous Hatari, le joystick doit être émulé par le clavier sur le port 1 : option
-  --joystick 1, ou F12 > Joysticks > Joystick 1 > « Use keyboard ». Flèches = joystick,
-  Ctrl droit = bouton. Sans cela, les flèches arrivent au jeu comme des touches, qu'il
-  ignore : on ne peut ni choisir dans les menus ni tourner.
+  Sous Hatari, les deux réglages marchent : sans émulation du joystick (les flèches vont
+  au jeu comme touches), ou avec --joystick 1 (flèches + Ctrl droit sur le port 1).
 
   Le DSP n'est pas utilisé, ni pour la 3D ni pour le son, parce qu'il ne ferait rien
   gagner (mesuré au profileur de Hatari) :
