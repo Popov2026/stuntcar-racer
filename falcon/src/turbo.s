@@ -29,17 +29,12 @@ GREL	macro
 ; avec f = dx/2+1, ce qui donne les mêmes x. L'erreur finale du Bresenham (d3) est
 ; celle de départ, x et y finissent sur (x1, y1).
 	section	turbo,code
-t_edge_slow:
-	move.l	#$702b8,a1			; instruction déplacée par le « jmp »
-	GREL
-	jmp	($53542).l			; puis le code d'origine
-	GREL
 t_edge:
 	move.l	($54d00).l,a0
 	GREL
 	cmp.l	#$72c50,a0			; table des bords pleine (original)
 	GREL
-	bge.s	t_edge_slow
+	bge	t_edge_slow
 	move.l	#$6ec5c,a4
 	GREL
 	move.l	#$6ed9c,a5
@@ -48,14 +43,14 @@ t_edge:
 	move.w	(a4,d2.w),d6
 	move.w	(a5,d1.w),d5
 	move.w	(a5,d2.w),d7
-	cmp.w	#256,d4				; hors de la fenêtre : découpage (original)
-	bhs.s	t_edge_slow
-	cmp.w	#256,d6
-	bhs.s	t_edge_slow
-	cmp.w	#128,d5
-	bhs.s	t_edge_slow
-	cmp.w	#128,d7
-	bhs.s	t_edge_slow
+	move.w	d4,d0				; hors de la fenêtre (x >= 256, y >= 128) :
+	or.w	d6,d0				; découpage (original)
+	and.w	#$ff00,d0
+	bne	t_edge_slow
+	move.w	d5,d0
+	or.w	d7,d0
+	and.w	#$ff80,d0
+	bne	t_edge_slow
 	move.l	#$702b8,a1
 	GREL
 	clr.w	($5353a).l
@@ -73,12 +68,13 @@ t_edge:
 	exg	d6,d4
 	or.b	#64,(a1,d0.w)
 .down:	moveq	#0,d0				; comme l'original en $53ACA (mot fort nul)
-	bra	t_trace
 
 ; tracé proprement dit ($53ACA, atteint aussi après découpage d'un bord) : d4, d5 =
 ; x0, y0 et d6, d7 = x1, y1 (y0 >= y1), a2 = en-tête, a0 = x par ligne ; en-tête y
 ; écrit si ($5353A) >= 0 ; après les x, ($53536)+1 fois le mot ($53538) si
 ; ($53536) >= 0. a1 et le mot fort de d0 restent ceux de l'entrée, comme l'original.
+; Un seul code pour les deux sens (d0 = pas de x, +1 ou -1). Drapeau X à la sortie :
+; 0 dans tous les cas, comme le Bresenham d'origine (dernière retenue nulle).
 t_trace:
 	move.w	d5,d2
 	sub.w	d7,d2				; dy
@@ -100,54 +96,26 @@ t_trace:
 	move.w	d7,2(a2)
 .nh:	move.w	d4,4(a2)
 	move.w	d6,6(a2)
-	tst.w	d1
-	bpl	.left
-	neg.w	d1				; dx
-	cmp.w	d2,d1
-	blt	.yr
-	bsr	.xprep				; x croissant, plus large que haut
-	tst.w	d2
-	beq	.xend
-	add.w	d0,d4				; x0 + k1
-	move.w	d4,(a0)+
-	bsr	.xqr
-	cmp.l	a1,a0
-	beq	.xend
-.xr:	sub.w	d1,d5				; s -= r
-	bcs.s	.xr1
-	add.w	d0,d4				; x += q
-	move.w	d4,(a0)+
-	cmp.l	a1,a0
-	bne.s	.xr
-	bra.s	.xend
-.xr1:	add.w	d2,d5				; s += dy, x += q+1
-	add.w	d0,d4
-	addq.w	#1,d4
-	move.w	d4,(a0)+
-	cmp.l	a1,a0
-	bne.s	.xr
-	bra.s	.xend
-
-.orig:	move.w	d5,d2				; instructions déplacées par le « jmp »
-	sub.w	d7,d2
-	move.w	d4,d1
-	jmp	($53ad0).l
-	GREL
-
-.yr:	move.w	d2,d3				; x croissant, plus haut que large
+	moveq	#1,d0				; pas de x : +1 si x0 < x1
+	neg.w	d1
+	bpl.s	.dx
+	neg.w	d1
+	moveq	#-1,d0
+.dx:	cmp.w	d2,d1				; d1 = dx
+	bhs	.xmaj
+	move.w	d2,d3				; plus haut que large : Bresenham d'origine
 	lsr.w	#1,d3
 	not.w	d3
 	move.w	d2,d5
 	subq.w	#1,d5
-.yr1:	move.w	d4,(a0)+
+.yl:	move.w	d4,(a0)+
 	add.w	d1,d3
-	bcc.s	.yr2
+	bcc.s	.yn
 	sub.w	d2,d3
-	addq.w	#1,d4
-.yr2:	dbf	d5,.yr1
-	bra.s	.end
-.xend:	and.b	#$ef,ccr			; X : comme à la sortie du Bresenham d'origine
-.end:	move.l	tr_d0,d0
+	add.w	d0,d4
+.yn:	dbf	d5,.yl
+.end:	and.b	#$ef,ccr
+	move.l	tr_d0,d0
 	move.w	($53536).l,d0			; prolongement du bord (découpage)
 	GREL
 	bmi.s	.nf
@@ -164,77 +132,69 @@ t_trace:
 	clr.w	d1
 	clr.w	d2
 	rts
-
-.left:	cmp.w	d2,d1				; x décroissant
-	blt.s	.yl
-	bsr.s	.xprep
-	tst.w	d2
-	beq.s	.xend
-	sub.w	d0,d4				; x0 - k1
-	move.w	d4,(a0)+
-	bsr.s	.xqr
-	cmp.l	a1,a0
-	beq.s	.xend
-.xl:	sub.w	d1,d5
-	bcs.s	.xl1
-	sub.w	d0,d4
-	move.w	d4,(a0)+
-	cmp.l	a1,a0
-	bne.s	.xl
-	bra.s	.xend
-.xl1:	add.w	d2,d5
-	sub.w	d0,d4
-	subq.w	#1,d4
-	move.w	d4,(a0)+
-	cmp.l	a1,a0
-	bne.s	.xl
-	bra.s	.xend
-
-.yl:	move.w	d2,d3
+; plus large que haut : le j-ième x est x0 +- k_j, k_j = ceil(((j-1)*dx + f)/dy),
+; f = dx/2 + 1 ; s = k_j*dy - (j-1)*dx - f (0 <= s < dy) ; dx = q*dy + r. Erreur d3 du
+; Bresenham d'origine à la sortie : ~(dx/2), celle du départ.
+.xmaj:	move.w	d1,d3
 	lsr.w	#1,d3
 	not.w	d3
-	move.w	d2,d5
-	subq.w	#1,d5
-.yl1:	move.w	d4,(a0)+
-	add.w	d1,d3
-	bcc.s	.yl2
-	sub.w	d2,d3
-	subq.w	#1,d4
-.yl2:	dbf	d5,.yl1
-	bra.s	.end
-
-; plus large que haut : d1 = dx >= d2 = dy. Erreur d3 = ~(dx/2) comme l'original.
-; Le j-ième x est x0 +- k_j, k_j = ceil(((j-1)*dx + f)/dy), f = dx/2 + 1 ;
-; s = k_j*dy - (j-1)*dx - f (0 <= s < dy). Sortie : d0.w = k1, d5.w = s,
-; a1 = fin des dy x. Seuls d0 et a1 servent en entier (rétablis à la fin) : les mots
-; forts des autres registres restent ceux de l'original.
-.xprep:	move.w	d1,d3
-	lsr.w	#1,d3
-	not.w	d3
+	move.l	d3,tr_d3
 	tst.w	d2
-	beq.s	.xp1
-	lea	(a0,d2.w*2),a1
-	moveq	#0,d0
-	move.w	d1,d0
-	lsr.w	#1,d0
-	addq.w	#1,d0				; f
-	divu.w	d2,d0				; reste : quotient
-	swap	d0
-	move.w	d0,d5
-	beq.s	.xp0
+	beq.s	.xend				; horizontal : aucun x
+	lea	(a0,d2.w*2),a1			; fin des x
+	moveq	#0,d3
+	move.w	d1,d3
+	lsr.w	#1,d3
+	addq.w	#1,d3				; f
+	divu.w	d2,d3				; reste : quotient
+	swap	d3
+	move.w	d3,d5
+	beq.s	.x0
 	sub.w	d2,d5
 	neg.w	d5				; s = dy - reste
-	add.l	#$10000,d0			; k1 = quotient + 1
-.xp0:	swap	d0
-.xp1:	rts
-; dx = q*dy + r : d0.w = q, d1.w = r
-.xqr:	moveq	#0,d0
-	move.w	d1,d0
-	divu.w	d2,d0
-	swap	d0
-	move.w	d0,d1
-	swap	d0
-	rts
+	add.l	#$10000,d3			; k1 = quotient + 1
+.x0:	swap	d3
+	tst.w	d0
+	bpl.s	.x1
+	neg.w	d3
+.x1:	add.w	d3,d4				; x0 +- k1
+	move.w	d4,(a0)+
+	moveq	#0,d3
+	move.w	d1,d3
+	divu.w	d2,d3				; r : q
+	swap	d3
+	move.w	d3,d1				; r
+	swap	d3				; q
+	tst.w	d0
+	bpl.s	.x2
+	neg.w	d3				; -q si x décroît
+.x2:	cmp.l	a1,a0
+	beq.s	.xend
+.xl:	sub.w	d1,d5				; s -= r
+	bcs.s	.xc
+	add.w	d3,d4				; x +- q
+	move.w	d4,(a0)+
+	cmp.l	a1,a0
+	bne.s	.xl
+	bra.s	.xend
+.xc:	add.w	d2,d5				; s += dy, x +- (q+1)
+	add.w	d3,d4
+	add.w	d0,d4
+	move.w	d4,(a0)+
+	cmp.l	a1,a0
+	bne.s	.xl
+.xend:	move.l	tr_d3,d3
+	bra	.end
+.orig:	move.w	d5,d2				; instructions déplacées par le « jmp »
+	sub.w	d7,d2
+	move.w	d4,d1
+	jmp	($53ad0).l
+	GREL
+t_edge_slow:
+	move.l	#$702b8,a1			; instruction déplacée par le « jmp »
+	GREL
+	jmp	($53542).l			; puis le code d'origine
+	GREL
 
 ; sprite masqué du cockpit ($56762) : d0.b = n° du sprite. Par bloc de 16 pixels :
 ; masque (mot), puis 2 mots longs de plans ; écran = (écran ET masque) OU sprite.

@@ -1317,6 +1317,7 @@ chk_m1:		ds.b	32000
 grel_delta:	ds.l	1
 tr_a1:		ds.l	1
 tr_d0:		ds.l	1
+tr_d3:		ds.l	1
 render_sp:	ds.l	1
 abort_pc:	ds.l	1
 in_render:	ds.w	1
