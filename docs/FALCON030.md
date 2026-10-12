@@ -23,7 +23,7 @@ Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches 
 les routines réécrites) — touches au lancement, ligne de commande ou
 première ligne de `SCRF030.INF`.
 
-### Mode fluide : 8,33 → 19,3 images/s
+### Mode fluide : 8,33 → 20,5 images/s
 
 Le jeu fait un tour (logique + rendu `$51BCC` + échange d'écran) au plus toutes les 6 VBL
 (compteur `$4EC20` rechargé à 6) : 8,33 images/s sur Falcon (6,5 environ sur ST, dont le rendu
@@ -62,9 +62,11 @@ dépasse parfois 6 VBL). Quand le jeu installe sa VBL, le relais le reconnaît (
      écrans à la même VBL que l'original.
 
 Mesures sous Hatari (`--cpu-exact on`, caches du 68030 émulés), accélérateur enfoncé sur Little
-Ramp, voiture en course : **19,3 images/s** (une image toutes les 2 VBL dans un peu plus de la
-moitié des tours, toutes les 3 VBL ailleurs ; une image extrapolée coûte 35 à 45 ms, et il en
-faudrait au plus 35 ms pour en mettre deux dans chaque tour, soit 25 images/s). Même partie
+Ramp, voiture en course : **20,5 images/s** en moyenne sur quatre alignements du jeu en mémoire
+(20 à 21 ; deux images extrapolées dans environ la moitié des tours, une ailleurs ; une image
+extrapolée coûte 35 à 45 ms, il en faudrait au plus 35 pour en mettre deux dans chaque tour,
+soit 25 images/s). L'alignement du code sur les lignes du cache d'instructions fait varier le
+résultat de quelques pour cent : les comparaisons se font sur quatre décalages. Même partie
 rejouée depuis un instantané, avec et sans le mode fluide : position, vitesse, caméra,
 adversaire, générateur pseudo-aléatoire relevés à chaque tour de physique (`$4EEB0`) : **tous
 les états identiques, aux mêmes VBL** (1357 sur 1357).
@@ -80,7 +82,17 @@ d'origine avant toute écriture. Option `T` : sans elles.
 |---|---|---|
 | `$5353C` tracé d'un bord de polygone (12 % du temps) | Bresenham pas à pas en x : 5 instructions par pixel pour les bords plus larges que hauts | un pas par ligne : x = x0 ± ⌈((j-1)·dx + f)/dy⌉, f = dx/2+1, en q ou q+1 (dx = q·dy + r) ; erreur finale et extrémités démontrées identiques ; 2 fois moins d'instructions |
 | `$53ACA` même tracé après découpage d'un bord | idem | idem, avec l'en-tête conditionnel (`$5353A`) et le prolongement du bord (`$53536`/`$53538`) ; `a1` et le mot fort de `d0` conservés |
+| `$552C0`, `$53304` boucles par ligne du remplissage des polygones et des triangles | 400 octets, cas rares mêlés au chemin courant : rechargées dans le cache d'instructions (256 octets) à chaque ligne | mêmes instructions dans le même ordre, chemin courant d'un seul tenant ; cas rares renvoyés au code d'origine à l'instruction exacte |
 | `$56762` sprite masqué du cockpit | lecture + écriture de l'écran pour chaque bloc de 16 pixels | bloc opaque (masque nul) : écrit sans lire ; masque plein et plans nuls : rien ; ≈ 27 % d'accès en moins |
+
+**Code que le jeu modifie** : `$53094` (choix de la couleur) réécrit, à chaque couleur, les
+opcodes `bset`/`bclr` du tracé de pixel `$5313E` (un par plan) ; le cache d'instructions du
+68030 ne voit pas ces écritures et pourrait exécuter l'ancienne couleur. Avec les caches
+allumés, `t_color` appelle l'original puis, si la couleur a changé, retire du cache les mots
+longs modifiés (`CAAR` + `CEI`, drapeaux de l'original rendus). Relevé sous Hatari : en course,
+ce sont les seuls octets d'instructions exécutées qui changent (121 copies de la mémoire
+comparées) ; l'analyse statique des écritures à adresse fixe ne trouve rien d'autre après le
+démarrage. Coût : 0,8 image/s.
 
 Vérification :
 
@@ -89,6 +101,9 @@ Vérification :
   dans et hors de la fenêtre, table pleine, fond d'écran), comparaison de toute la mémoire et
   des registres : 300 000 bords, **toutes les pentes** (dx 0-255, dy 0-127, deux sens, deux
   ordres : 131 072 cas), 30 000 tracés après découpage, 5 000 sprites — aucune différence ;
+* rejeu (`bench replay`) : mémoire et registres relevés sous Hatari à l'entrée d'appels réels,
+  rejoués avec le code d'origine puis avec le code réécrit : 60 polygones, 60 triangles,
+  120 lignes de décor (pixel et couleur) — aucune différence ;
 * dans le jeu sous Hatari, variante de contrôle (`-DSELFCHECK=1 -DCHKEDGE=1` ou `-DCHKSPR=1`) :
   chaque appel réel exécute l'original puis la réécrite sur les mêmes entrées et compare
   registres, CCR et mémoire : 40 941 bords et 1 108 sprites d'une course, **aucun écart**.

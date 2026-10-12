@@ -300,7 +300,8 @@ static int replay(int argc, char **argv)
 		for (int i = 0; i < 7; i++) diff |= a.a[i] != b.a[i];
 		diff |= (a.sr & 0x1f) != (b.sr & 0x1f);
 		long md = -1;
-		for (long i = 0; i < GAMEMEM; i++)
+		long ign = getenv("BENCH_IGNORE_BELOW") ? strtol(getenv("BENCH_IGNORE_BELOW"), NULL, 0) : 0;
+		for (long i = ign; i < GAMEMEM; i++)	/* (au-dessous : variables du lanceur) */
 			if (mem[i] != resA[i] && !(i >= (long)(in.a[7] - 0x400) && i < (long)in.a[7])) { md = i; break; }
 		diff |= md >= 0;
 		if (diff && bad < 5) {

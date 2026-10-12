@@ -676,9 +676,19 @@ detect_game:
 	clr.w	have_prev
 	move.l	#interp_wait,G_WAITCALL+2(a0)	; jsr interp_wait
 	move.w	#1,interp_on
-	btst	#OPT_NOTURBO,options+1
+	bsr	turbo_reloc			; adresses du jeu dans turbo.s
+	tst.w	icache_on			; code que le jeu modifie : cache vidé
+	beq.s	.nocc
+	ifd	NOCOLORFIX
+	bra.s	.nocc
+	endc
+	lea	cache_tab,a1
+	bsr	turbo_patch
+	move.b	#$f0,pix_col			; couleur en place : inconnue
+.nocc:	btst	#OPT_NOTURBO,options+1
 	bne.s	.noturbo
-	bsr	turbo_install
+	lea	turbo_tab,a1
+	bsr	turbo_patch
 	ifd	SELFCHECK
 	move.l	#'CHK!',chk_magic
 	endc
@@ -938,7 +948,7 @@ vbl_flip:
 	rts
 
 ; routines réécrites (turbo.s) : adresses du jeu relogées, « jmp » posés (a0 = base)
-turbo_install:
+turbo_reloc:
 	movem.l	d0-d2/a1-a2,-(sp)
 	move.l	a0,d0
 	sub.l	#$10100,d0
@@ -947,11 +957,19 @@ turbo_install:
 	move.l	d2,grel_delta
 	lea	grel_start,a1
 .r:	cmp.l	#grel_end,a1
-	bhs.s	.p
+	bhs.s	.d
 	move.l	(a1)+,a2
 	add.l	d0,(a2)
 	bra.s	.r
-.p:	lea	turbo_tab,a1
+.d:	move.l	cache_on_value,d0		; CACR pour vider une entrée du cache
+	and.w	#$f7f7,d0			; d'instructions (CEI) sans tout vider
+	or.w	#$0004,d0
+	move.l	d0,cei_value
+	movem.l	(sp)+,d0-d2/a1-a2
+	rts
+; table a1 : « jmp » posés (a0 = base)
+turbo_patch:
+	movem.l	d0-d2/a1-a2,-(sp)
 .t:	move.l	(a1)+,d0
 	bmi.s	.done
 	lea	(a0,d0.l),a2
@@ -1315,6 +1333,9 @@ chk_m0:		ds.b	32000
 chk_m1:		ds.b	32000
 	endc
 grel_delta:	ds.l	1
+cei_value:	ds.l	1
+pix_col:	ds.b	1			; couleur des opcodes du pixel ($5313E)
+pix_chg:	ds.b	1
 tr_a1:		ds.l	1
 tr_d0:		ds.l	1
 tr_d3:		ds.l	1
@@ -1359,3 +1380,6 @@ relays:		ds.w	3*256
 stack_top:	ds.l	1
 screen_mem:	ds.b	SCREEN_AREA+256
 ebuf_mem:	ds.b	4*SCREEN_BYTES+256		; 4 écrans (32000 = 125*256 : alignés)
+	ifd	PAD				; essais : décale l'adresse de chargement du jeu
+		ds.b	PAD
+	endc

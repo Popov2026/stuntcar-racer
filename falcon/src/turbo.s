@@ -606,6 +606,74 @@ t_lines53:
 	move.l	d0,(a4)+
 	bra	.next
 
+; choix de la couleur ($53094) : l'original réécrit les opcodes bset/bclr du tracé de
+; pixel $5313E (un par plan). Le cache d'instructions du 68030 ne voit pas ces écritures :
+; il pourrait exécuter l'ancienne couleur. Après l'original, si la couleur a changé, les
+; mots longs modifiés sont retirés du cache (CAAR + CEI) ; drapeaux de l'original rendus.
+; Posé seulement quand le cache d'instructions est allumé.
+	section	turbo,code
+t_color:					; d0.b : bit p = plan p (1 : bset)
+	move.l	d1,-(sp)			; (drapeaux d'entrée : écrasés par l'original)
+	move.b	d0,d1
+	and.b	#15,d1
+	eor.b	d1,pix_col			; plans qui changent
+	beq.s	.same
+	move.b	pix_col,pix_chg
+	move.b	d1,pix_col
+	move.l	(sp)+,d1
+	bsr.s	.c				; l'original
+	move.w	ccr,-(sp)
+	movem.l	d0-d2/a0-a1,-(sp)
+	moveq	#0,d0
+	move.b	pix_chg,d0
+	cmp.b	#16,d0				; premier appel (couleur inconnue) : tous
+	blo.s	.k
+	moveq	#15,d0
+.k:	move.l	cei_value,d2
+	lea	.adr(pc),a1
+	moveq	#4-1,d1
+.p:	lsr.w	#1,d0
+	bcc.s	.n
+	move.l	(a1),a0				; les deux mots longs du plan
+	movec	a0,caar
+	movec	d2,cacr
+	move.l	4(a1),a0
+	movec	a0,caar
+	movec	d2,cacr
+.n:	addq.l	#8,a1
+	dbf	d1,.p
+	movem.l	(sp)+,d0-d2/a0-a1
+	move.w	(sp)+,ccr
+	rts
+.same:	move.b	d1,pix_col			; (inchangée : remise)
+	move.l	(sp)+,d1
+.c:	lsr.b	#1,d0				; instructions déplacées par le « jmp »
+	bcs.s	.s
+	jmp	($5309a).l
+	GREL
+.s:	jmp	($530ae).l
+	GREL
+.adr:	dc.l	$53150,$53164			; plan 0 : mots longs des deux opcodes
+	GREL
+	section	grel,data
+	dc.l	.adr
+	section	turbo,code
+	dc.l	$53154,$53168			; plan 1
+	GREL
+	section	grel,data
+	dc.l	.adr+8
+	section	turbo,code
+	dc.l	$53158,$5316c			; plan 2
+	GREL
+	section	grel,data
+	dc.l	.adr+16
+	section	turbo,code
+	dc.l	$5315c,$53170			; plan 3
+	GREL
+	section	grel,data
+	dc.l	.adr+24
+	section	turbo,code
+
 ; routines remplacées : décalage depuis $10100, premier mot attendu, remplaçante
 	section	turbo,code
 	even
@@ -633,4 +701,10 @@ turbo_tab:
 	elseif
 	dc.l	t_sprite
 	endc
+	dc.l	-1
+; posées quand le cache d'instructions est allumé (même avec l'option T)
+cache_tab:
+	dc.l	$53094-$10100
+	dc.w	$e208				; lsr.b #1,d0
+	dc.l	t_color
 	dc.l	-1

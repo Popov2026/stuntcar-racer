@@ -53,9 +53,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     * dessine une ou deux images de plus par tour : le rendu du jeu est rappelé avec la
       caméra et l'adversaire prolongés dans le sens du dernier déplacement, dans des
       écrans à lui, que la VBL affiche à mi-tour (ou au tiers et aux deux tiers).
-  Résultat sous Hatari (68030 exact, caches émulés), voiture en course : 19,3 images/s
-  (une image toutes les 2 VBL dans un peu plus de la moitié des tours, toutes les 3
-  ailleurs). La logique du jeu n'est pas touchée : ce
+  Résultat sous Hatari (68030 exact, caches émulés), voiture en course : 20,5 images/s
+  (une image toutes les 2 VBL dans environ la moitié des tours, toutes les 3 ailleurs). La logique du jeu n'est pas touchée : ce
   que le rendu supplémentaire modifie est sauvegardé puis rétabli, et une même partie
   donne exactement les mêmes états, tour par tour, avec et sans ce mode.
 
