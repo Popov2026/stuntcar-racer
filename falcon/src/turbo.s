@@ -446,6 +446,206 @@ t_sprite_o:
 	GREL
 	endc
 
+; boucles par ligne du remplissage des polygones ($552C0, dans $55100) et des triangles
+; ($53304, dans $53284) : les MÊMES instructions dans le même ordre, mais disposées pour
+; que le chemin courant tienne dans le cache d'instructions du 68030 (256 octets) ; les
+; cas rares (changement de bord, ligne particulière) repartent dans le code d'origine,
+; à l'instruction exacte, qui revient ensuite ici.
+	section	turbo,code
+t_lines55:
+.L:	move.w	($10a44).l,d0
+	GREL
+	cmp.w	($5662e).l,d0
+	GREL
+	beq	.c1
+	move.w	(a0)+,d4			; x gauche
+	bmi	.c2
+	move.w	(a3)+,d5			; x droit
+	bmi	.c3
+	cmp.w	d4,d5
+	bgt.s	.sp
+	beq	.next
+	jmp	($5538a).l
+	GREL
+.c1:	jmp	($552d0).l			; ligne où les bords changent
+	GREL
+.c2:	jmp	($55320).l			; bord gauche suivant
+	GREL
+.c3:	jmp	($55354).l			; bord droit suivant
+	GREL
+.sp:	move.w	d4,d1				; tracé d'une ligne, de x = d4 à d5
+	andi.w	#240,d1
+	lsr.w	#1,d1
+	lea	(a6,d1.w),a4
+	move.w	d4,d3
+	move.w	d5,d1
+	lsr.w	#4,d3
+	lsr.w	#4,d1
+	sub.w	d3,d1
+	beq	.one
+	subq.b	#1,d1				; plusieurs blocs de 16 pixels
+	andi.w	#15,d4
+	beq.s	.mid
+	asl.w	#2,d4
+	move.l	(a5,d4.w),d4
+	move.l	d6,d2
+	move.l	d7,d3
+	and.l	d4,d2
+	and.l	d4,d3
+	not.l	d4
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d2,d0
+	move.l	d0,(a4)+
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d3,d0
+	move.l	d0,(a4)+
+	bra.s	.dbf
+.mid:	move.l	d6,(a4)+
+	move.l	d7,(a4)+
+.dbf:	dbf	d1,.mid
+	andi.w	#15,d5
+	beq.s	.next
+	asl.w	#2,d5
+	move.l	$40(a5,d5.w),d4
+	move.l	d6,d2
+	move.l	d7,d3
+	and.l	d4,d2
+	and.l	d4,d3
+	not.l	d4
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d2,d0
+	move.l	d0,(a4)+
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d3,d0
+	move.l	d0,(a4)+
+.next:	subq.w	#1,($10a44).l			; ligne suivante (au-dessus)
+	GREL
+	sub.l	#160,a6
+	cmp.l	($56c78).l,a6
+	GREL
+	bge	.L
+	jmp	($5545a).l			; fin de la boucle d'origine
+	GREL
+.one:	andi.w	#15,d4				; un seul bloc
+	asl.w	#2,d4
+	move.l	(a5,d4.w),d4
+	andi.w	#15,d5
+	asl.w	#2,d5
+	move.l	$40(a5,d5.w),d5
+	and.l	d5,d4
+	move.l	d6,d2
+	move.l	d7,d3
+	and.l	d4,d2
+	and.l	d4,d3
+	not.l	d4
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d2,d0
+	move.l	d0,(a4)+
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d3,d0
+	move.l	d0,(a4)+
+	bra	.next
+
+	section	turbo,code
+t_lines53:
+.L:	move.w	(a0)+,d4			; x gauche
+	bmi	.c2
+	move.w	(a3)+,d5			; x droit
+	bmi	.c3
+	cmp.w	d4,d5
+	bgt.s	.sp
+	beq	.next
+	jmp	($5339e).l
+	GREL
+.c2:	jmp	($5330a).l
+	GREL
+.c3:	jmp	($53352).l
+	GREL
+.sp:	move.w	d4,d1				; tracé d'une ligne, de x = d4 à d5
+	andi.w	#240,d1
+	lsr.w	#1,d1
+	lea	(a6,d1.w),a4
+	move.w	d4,d3
+	move.w	d5,d1
+	lsr.w	#4,d3
+	lsr.w	#4,d1
+	sub.w	d3,d1
+	beq	.one
+	subq.b	#1,d1				; plusieurs blocs de 16 pixels
+	andi.w	#15,d4
+	beq.s	.mid
+	asl.w	#2,d4
+	move.l	(a5,d4.w),d4
+	move.l	d6,d2
+	move.l	d7,d3
+	and.l	d4,d2
+	and.l	d4,d3
+	not.l	d4
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d2,d0
+	move.l	d0,(a4)+
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d3,d0
+	move.l	d0,(a4)+
+	bra.s	.dbf
+.mid:	move.l	d6,(a4)+
+	move.l	d7,(a4)+
+.dbf:	dbf	d1,.mid
+	andi.w	#15,d5
+	beq.s	.next
+	asl.w	#2,d5
+	move.l	$40(a5,d5.w),d4
+	move.l	d6,d2
+	move.l	d7,d3
+	and.l	d4,d2
+	and.l	d4,d3
+	not.l	d4
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d2,d0
+	move.l	d0,(a4)+
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d3,d0
+	move.l	d0,(a4)+
+.next:	subq.w	#1,($10a44).l			; ligne suivante (au-dessus)
+	GREL
+	sub.l	#160,a6
+	cmp.l	($56c78).l,a6
+	GREL
+	bge	.L
+	jmp	($5346e).l			; fin de la boucle d'origine
+	GREL
+.one:	andi.w	#15,d4				; un seul bloc
+	asl.w	#2,d4
+	move.l	(a5,d4.w),d4
+	andi.w	#15,d5
+	asl.w	#2,d5
+	move.l	$40(a5,d5.w),d5
+	and.l	d5,d4
+	move.l	d6,d2
+	move.l	d7,d3
+	and.l	d4,d2
+	and.l	d4,d3
+	not.l	d4
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d2,d0
+	move.l	d0,(a4)+
+	move.l	(a4),d0
+	and.l	d4,d0
+	or.l	d3,d0
+	move.l	d0,(a4)+
+	bra	.next
+
 ; routines remplacées : décalage depuis $10100, premier mot attendu, remplaçante
 	section	turbo,code
 	even
@@ -460,6 +660,12 @@ turbo_tab:
 	dc.l	$53aca-$10100
 	dc.w	$3405				; move.w d5,d2
 	dc.l	t_trace
+	dc.l	$552c0-$10100
+	dc.w	$3039				; move.w $10A44,d0
+	dc.l	t_lines55
+	dc.l	$53304-$10100
+	dc.w	$3818				; move.w (a0)+,d4
+	dc.l	t_lines53
 	dc.l	$56762-$10100
 	dc.w	$2f05				; move.l d5,-(sp)
 	ifd	CHKSPR

@@ -29,9 +29,25 @@ static uint32_t base;
 unsigned int m68k_read_memory_8(unsigned int a) { return mem[a & (MEMSIZE - 1)]; }
 unsigned int m68k_read_memory_16(unsigned int a) { a &= MEMSIZE - 1; return mem[a] << 8 | mem[a + 1]; }
 unsigned int m68k_read_memory_32(unsigned int a) { return m68k_read_memory_16(a) << 16 | m68k_read_memory_16(a + 2); }
-void m68k_write_memory_8(unsigned int a, unsigned int v) { mem[a & (MEMSIZE - 1)] = v; }
-void m68k_write_memory_16(unsigned int a, unsigned int v) { a &= MEMSIZE - 1; mem[a] = v >> 8; mem[a + 1] = v; }
+/* journal des écritures (diagnostic : BENCH_LOG=1) */
+static int wlog_on, wlog_n;
+static struct { uint32_t a, v, pc; } wlog[2][200000];
+static int wlog_k;
+static void logw(unsigned a, unsigned v)
+{
+	if (wlog_on && wlog_n < 200000 && a < 0xe00000) {
+		wlog[wlog_k][wlog_n].a = a; wlog[wlog_k][wlog_n].v = v;
+		wlog[wlog_k][wlog_n].pc = m68k_get_reg(NULL, M68K_REG_PPC); wlog_n++;
+	}
+}
+void m68k_write_memory_8(unsigned int a, unsigned int v) { logw(a, v & 0xff); mem[a & (MEMSIZE - 1)] = v; }
+void m68k_write_memory_16(unsigned int a, unsigned int v) { logw(a, v & 0xffff); a &= MEMSIZE - 1; mem[a] = v >> 8; mem[a + 1] = v; }
 void m68k_write_memory_32(unsigned int a, unsigned int v) { m68k_write_memory_16(a, v >> 16); m68k_write_memory_16(a + 2, v); }
+static void wlog_cmp(void)
+{
+	static int na;
+	(void)na;
+}
 unsigned int m68k_read_disassembler_16(unsigned int a) { return m68k_read_memory_16(a); }
 unsigned int m68k_read_disassembler_32(unsigned int a) { return m68k_read_memory_32(a); }
 
@@ -101,10 +117,18 @@ static long call(uint32_t pc, const regs_t *in, regs_t *out)
 	m68k_set_reg(M68K_REG_A7, STACKTOP - 4);
 	w32(STACKTOP - 4, SENTINEL);
 	m68k_set_reg(M68K_REG_PC, pc);
+	static FILE *tr; static int trn;
+	const char *tre = getenv("BENCH_TRACE");
+	if (tre && !tr) tr = fopen(tre, "w");
 	while (m68k_get_reg(NULL, M68K_REG_PC) != SENTINEL) {
+		if (tr && trn < 2) fprintf(tr, "%d %06x d0=%08x d1=%08x d2=%08x d3=%08x d4=%08x d5=%08x a4=%08x a5=%08x\n", trn,
+			m68k_get_reg(NULL, M68K_REG_PC), m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1),
+			m68k_get_reg(NULL, M68K_REG_D2), m68k_get_reg(NULL, M68K_REG_D3), m68k_get_reg(NULL, M68K_REG_D4),
+			m68k_get_reg(NULL, M68K_REG_D5), m68k_get_reg(NULL, M68K_REG_A4), m68k_get_reg(NULL, M68K_REG_A5));
 		m68k_execute(1);
 		if (++n > 2000000) return -1;
 	}
+	if (tr) trn++;
 	for (int i = 0; i < 8; i++) out->d[i] = m68k_get_reg(NULL, DREG[i]);
 	for (int i = 0; i < 8; i++) out->a[i] = m68k_get_reg(NULL, AREG[i]);
 	out->sr = m68k_get_reg(NULL, M68K_REG_SR);
@@ -197,8 +221,103 @@ static void gen_trace(regs_t *r)
 	w16(G(0x53538), rnd());
 }
 
+/* rejeu : bench replay DOSSIER BASE ENTRÉE PATCH... (adresses du jeu, doc)
+ * DOSSIER/NNN.bin : mémoire (0-$100000) relevée à l'entrée d'un appel réel, dans le
+ * jeu modifié ; DOSSIER/regs.txt : « NNN d0..d7 a0..a7 sr » en hexadécimal.
+ * Exécution A : octets d'origine (copie du jeu, game.bin) remis aux adresses PATCH ;
+ * exécution B : telle quelle (les « jmp » vers les routines réécrites, chargées avec
+ * le lanceur dans la même mémoire). */
+static int replay(int argc, char **argv)
+{
+	const char *dir = argv[2];
+	base = strtoul(argv[3], NULL, 0);
+	uint32_t entry = strtoul(argv[4], NULL, 0);
+	static uint8_t game[0x70000];
+	char fn[512];
+	snprintf(fn, sizeof fn, "%s/game.bin", dir);
+	FILE *g = fopen(fn, "rb");
+	if (!g) { perror(fn); return 2; }
+	size_t gl = fread(game, 1, sizeof game, g);
+	fclose(g);
+	snprintf(fn, sizeof fn, "%s/regs.txt", dir);
+	FILE *rf = fopen(fn, "r");
+	if (!rf) { perror(fn); return 2; }
+	m68k_init();
+	m68k_set_cpu_type(M68K_CPU_TYPE_68030);
+	m68k_pulse_reset();
+	char line[1024];
+	long n = 0, bad = 0, ia = 0, ib = 0;
+	while (fgets(line, sizeof line, rf)) {
+		regs_t in, a, b;
+		int id;
+		unsigned v[17];
+		if (sscanf(line, "%d %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x", &id,
+		           &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7], &v[8], &v[9], &v[10],
+		           &v[11], &v[12], &v[13], &v[14], &v[15], &v[16]) != 18) continue;
+		for (int i = 0; i < 8; i++) { in.d[i] = v[i]; in.a[i] = v[8 + i]; }
+		in.sr = v[16];
+		snprintf(fn, sizeof fn, "%s/%03d.bin", dir, id);
+		FILE *f = fopen(fn, "rb");
+		if (!f) continue;
+		if (fread(pristine, 1, GAMEMEM, f) != GAMEMEM) { fclose(f); continue; }
+		fclose(f);
+		/* A : code d'origine aux adresses remplacées */
+		memcpy(mem, pristine, GAMEMEM);
+		for (int k = 5; k < argc; k++) {
+			uint32_t d = strtoul(argv[k], NULL, 0), o = d - 0x10100;
+			if (o + 6 <= gl) memcpy(mem + G(d), game + o, 6);
+			uint32_t l = rd32(game + o + 2);	/* adresse du jeu après le mot d'instruction : relogée */
+			if (l >= 0x10100 && l < 0x73370) w32(G(d) + 2, l + base - 0x10100);
+		}
+		int lg = getenv("BENCH_LOG") != NULL, nA;
+		wlog_on = lg; wlog_k = 0; wlog_n = 0;
+		long ca = call(G(entry), &in, &a);
+		nA = wlog_n;
+		memcpy(resA, mem, GAMEMEM);
+		memcpy(mem, pristine, GAMEMEM);
+		wlog_k = 1; wlog_n = 0;
+		long cb = call(G(entry), &in, &b);
+		wlog_on = 0;
+		if (lg) {	/* écritures hors pile, dans l'ordre */
+			int i = 0, j = 0;
+			while (i < nA && j < wlog_n) {
+				if (wlog[0][i].a >= 0xe00000 - 0x100000) { i++; continue; }
+				if (wlog[1][j].a >= 0xe00000 - 0x100000) { j++; continue; }
+				if (wlog[0][i].a != wlog[1][j].a || wlog[0][i].v != wlog[1][j].v) {
+					printf("appel %d : écriture n° %d/%d diffère : A $%06x=%x (pc $%06x)  B $%06x=%x (pc $%06x)\n", id, i, j,
+					       wlog[0][i].a, wlog[0][i].v, wlog[0][i].pc, wlog[1][j].a, wlog[1][j].v, wlog[1][j].pc);
+					if (i > 0) printf("   précédente A pc $%06x, B pc $%06x\n", wlog[0][i-1].pc, wlog[1][j-1].pc);
+					break;
+				}
+				i++; j++;
+			}
+		}
+		ia += ca; ib += cb;
+		/* les octets de code restaurés en A ne comptent pas */
+		for (int k = 5; k < argc; k++) memcpy(resA + G(strtoul(argv[k], NULL, 0)), mem + G(strtoul(argv[k], NULL, 0)), 6);
+		int diff = ca < 0 || cb < 0;
+		for (int i = 0; i < 8; i++) diff |= a.d[i] != b.d[i];
+		for (int i = 0; i < 7; i++) diff |= a.a[i] != b.a[i];
+		diff |= (a.sr & 0x1f) != (b.sr & 0x1f);
+		long md = -1;
+		for (long i = 0; i < GAMEMEM; i++)
+			if (mem[i] != resA[i] && !(i >= (long)(in.a[7] - 0x400) && i < (long)in.a[7])) { md = i; break; }
+		diff |= md >= 0;
+		if (diff && bad < 5) {
+			printf("DIFFÉRENCE appel %d (instructions %ld / %ld)%s\n", id, ca, cb, md >= 0 ? " mémoire" : "");
+			if (md >= 0) printf("  mémoire $%06lx : %02x / %02x\n", md, resA[md], mem[md]);
+			for (int i = 0; i < 8; i++) printf("  d%d %08x / %08x   a%d %08x / %08x\n", i, a.d[i], b.d[i], i, a.a[i], b.a[i]);
+		}
+		bad += diff; n++;
+	}
+	printf("rejeu : %ld appels réels, %ld différences ; instructions %.0f -> %.0f par appel\n", n, bad,
+	       n ? (double)ia / n : 0, n ? (double)ib / n : 0);
+	return bad != 0;
+}
+
 int main(int argc, char **argv)
 {
+	if (argc > 1 && !strcmp(argv[1], "replay")) return replay(argc, argv);
 	if (argc < 6) { fprintf(stderr, "usage : bench RAM.bin BASE SCRF030.PRG LISTING ROUTINE [N [GRAINE]]\n"); return 2; }
 	FILE *f = fopen(argv[1], "rb");
 	if (!f) { perror(argv[1]); return 2; }
