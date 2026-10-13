@@ -21,7 +21,10 @@ const W = [[0x4b0c4, [0, 6], [0, 3]], [0x4e702, [0xee, 0x48], [0xe0, 0x48]], [0x
   [0x4f3d8, [0x30, 0x39, 0, 1, 0x0b, 0x0c], [0x4e, 0xb9, 0, 0x0e, 0, 0x08]],
   [0x4f500, [0x30, 0x39, 0, 1, 0x0b, 0x0e], [0x4e, 0xb9, 0, 0x0e, 0, 0x10]]];
 let SCALED = false;
-function setMode(e, d) { for (const s of SITES) e.cpu.mem[s + 3] = d ? 0x77 : 0xee; W.forEach(([a, o, n], k) => ((d && (k < 3 || SCALED)) ? n : o).forEach((v, i) => e.cpu.mem[a + i] = v)); }
+// chrono ($4B517 : centièmes ajoutés à chaque tour) : $13 en normal, $06/$07 en alternance en doublé
+function setMode(e, d) { for (const s of SITES) e.cpu.mem[s + 3] = d ? 0x77 : 0xee; W.forEach(([a, o, n], k) => ((d && (k < 3 || SCALED)) ? n : o).forEach((v, i) => e.cpu.mem[a + i] = v));
+  if (!d) e.cpu.mem[0x4b517] = 0x13; }
+function chronoStep(e) { e.cpu.mem[0x4b517] = e.cpu.mem[0x4b517] === 0x06 ? 0x07 : 0x06; }
 function engine(trk, scale) {
   const e = new SCR.Engine(bytes); e.renderOriginal = true; e.boot(); e.startPractice(trk);
   DMG.forEach((v, i) => e.cpu.mem[0xe0000 + i] = v); e.cpu.w16(0xe0000 + DMG.length - 2, scale);
@@ -30,7 +33,7 @@ function engine(trk, scale) {
 // un tour d'origine (0,12 s) : 1 tour de 6 VBL, ou 2 de 3 VBL en logique doublée (course en cours)
 function step(e, dbl, inp) {
   const on = dbl && e.b(0x109c9) === 0; setMode(e, on);
-  for (let k = 0; k < (on ? 2 : 1); k++) { e.setInput(inp); e.tick(on ? 3 : 6); }
+  for (let k = 0; k < (on ? 2 : 1); k++) { if (on) chronoStep(e); e.setInput(inp); e.tick(on ? 3 : 6); }
   return on;
 }
 const dmg = e => [e.b(0x10939), e.b(0x1093a), e.b(0x1093b)];
@@ -38,7 +41,7 @@ if (what === 'traj') {
   const trk = +(process.argv[4] || 0), N = +(process.argv[5] || 300);
   const inp = t => ({ up: t % 120 < 100, down: t % 120 >= 108, left: t % 50 >= 20 && t % 50 < 24, right: t % 50 >= 40 && t % 50 < 43, fire: t % 90 < 10 });
   const A = engine(trk, 256), B = engine(trk, 256);
-  const st = e => [(e.l(0x10ac2) / 65536).toFixed(0), (e.l(0x10ac6) / 65536).toFixed(0), (e.l(0x10aca) / 65536).toFixed(0), 'v', Math.hypot(e.sw(0x10ad4), e.sw(0x10ad8)).toFixed(0), 'lacet', e.w(0x10ad0).toString(16), 'dégâts', dmg(e).join('/')].join(' ');
+  const st = e => [(e.l(0x10ac2) / 65536).toFixed(0), (e.l(0x10ac6) / 65536).toFixed(0), (e.l(0x10aca) / 65536).toFixed(0), 'v', Math.hypot(e.sw(0x10ad4), e.sw(0x10ad8)).toFixed(0), 'lacet', e.w(0x10ad0).toString(16), 'dégâts', dmg(e).join('/'), 'chrono', e.b(0x11002).toString(16) + ':' + e.b(0x1101a).toString(16) + '.' + e.b(0x11032).toString(16)].join(' ');
   for (let t = 0; t < N; t++) { step(A, false, inp(t)); step(B, true, inp(t)); if (t % 25 === 0) console.log(String(t).padStart(4), 'normal', st(A), ' | doublé', st(B)); }
 } else {
   const tracks = (process.argv[4] || '0,1,2,3,4,5,6,7').split(',').map(Number), N = +(process.argv[5] || 1200), scale = +(process.argv[6] || 256); SCALED = scale !== 256;

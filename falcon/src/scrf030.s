@@ -93,6 +93,7 @@ G_END		equ	$73370-$10100		; fin de la BSS du jeu
 G_PIECE_TYPE	equ	$10ce6-$10100		; type de chaque pièce du circuit (bits 0-3)
 G_TYPE_TAB	equ	$13670-$10100		; données des types de pièce
 G_NPIECES	equ	$11114-$10100		; nombre de pièces du circuit
+G_CHRONO	equ	$4b517-$10100		; « move.b #$13,d0 » : centièmes ajoutés au chrono à chaque tour
 G_CD		equ	$109c9-$10100		; compte à rebours (grue, départ, remise en piste) : 0 en course
 G_JOY		equ	$106a6-$10100		; joystick (lu par le jeu, écrit par son $118)
 G_KEYS		equ	$6f02c-$10100		; touches enfoncées ($B3), par code clavier
@@ -1001,7 +1002,8 @@ interp_wait:
 ;  * facteur de pas #$EE -> #$77 sur les 22 sites (physique, adversaire, compteurs $4B124) ;
 ;  * 6 -> 3 VBL par tour ($4B0C2) ;
 ;  * réalignement du cap sans pas de temps ($4E702) : divisé par deux ;
-;  * amortisseur proportionnel à la variation de compression par tour ($4EE64) : doublé.
+;  * amortisseur proportionnel à la variation de compression par tour ($4EE64) : doublé ;
+;  * chrono : 0,13 s ajoutée à chaque tour ($4B514) -> 0,06 et 0,07 en alternance.
 ; Dégâts : mêmes passages rejoués depuis un même état (1 167, 8 circuits), 13 % de plus
 ; qu'en normal en moyenne, sans correction (dans le bruit d'un circuit à l'autre).
 ; La table dbl_jsr (« move.w force,d0 » <-> « jsr routine ») reste disponible, vide.
@@ -1018,7 +1020,15 @@ tick_hook:
 	beq.s	.same
 	move.b	d0,dbl_on
 	bsr.s	dbl_patch
-.same:	movem.l	(sp)+,d0-d3/a0-a2/a6
+.same:	tst.b	dbl_on				; chrono : 0,13 s par tour d'origine, donc
+	beq.s	.nc				; 0,06 puis 0,07 par demi-tour
+	cmp.b	#$06,G_CHRONO(a6)
+	seq	d1
+	and.b	#1,d1
+	addq.b	#6,d1
+	move.b	d1,G_CHRONO(a6)
+	bsr	flush_ic
+.nc:	movem.l	(sp)+,d0-d3/a0-a2/a6
 	jmp	([wait_addr])
 
 ; d0.b = 1 : pose, 0 : retire (chaque site vérifié avant d'être modifié) ; a6 = base
@@ -1077,11 +1087,26 @@ dbl_patch:
 	move.w	#$3039,(a0)
 	move.l	d2,2(a0)
 	bra.s	.k
-.flush:	tst.w	is_030				; code modifié : vider le cache d'instructions
+.flush:	lea	G_CHRONO(a6),a0			; chrono : $13 <-> $06/$07 (voir tick_hook)
+	tst.b	d0
+	beq.s	.cr
+	cmp.b	#$13,(a0)
+	bne.s	flush_ic
+	move.b	#$06,(a0)
+	bra.s	flush_ic
+.cr:	cmp.b	#$06,(a0)
+	beq.s	.c13
+	cmp.b	#$07,(a0)
+	bne.s	flush_ic
+.c13:	move.b	#$13,(a0)
+flush_ic:
+	tst.w	is_030				; code modifié : vider le cache d'instructions
 	beq.s	.nf
+	move.l	d1,-(sp)
 	movec	cacr,d1
 	bset	#3,d1
 	movec	d1,cacr
+	move.l	(sp)+,d1
 .nf:	rts
 
 ; image extrapolée inachevée quand le tour finit : la VBL fait reprendre ici (au retour

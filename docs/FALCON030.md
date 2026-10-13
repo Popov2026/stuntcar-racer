@@ -44,6 +44,7 @@ octets d'origine, puis vide le cache d'instructions :
 | `$4B0C2` `move.b #6,$4EC20` | 6 | 3 | VBL par tour |
 | `$4E702` `lsr.w #7` | 7 | 8 | réalignement du cap vers la piste, ajouté au lacet à chaque tour sans pas de temps |
 | `$4EE64` | `$114` | `$228` | amortisseur : proportionnel à la variation de compression d'un tour à l'autre (`$10B04`) |
+| `$4B514` `move.b #$13,d0` | `$13` | `$06`/`$07` en alternance | chrono (`$11002` minutes, `$1101A` secondes, `$11032` centièmes, BCD) : 0,13 s ajoutée à chaque tour (le jeu d'origine compte donc 8 % de trop : un tour dure 0,12 s) |
 
 Validation dans le moteur fidèle (`replica/js/engine.js`, le code 68000 du jeu exécuté en
 JavaScript), course normale contre course doublée, mêmes commandes au même instant : vitesse,
