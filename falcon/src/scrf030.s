@@ -93,6 +93,7 @@ G_END		equ	$73370-$10100		; fin de la BSS du jeu
 G_PIECE_TYPE	equ	$10ce6-$10100		; type de chaque pièce du circuit (bits 0-3)
 G_TYPE_TAB	equ	$13670-$10100		; données des types de pièce
 G_NPIECES	equ	$11114-$10100		; nombre de pièces du circuit
+G_CD		equ	$109c9-$10100		; compte à rebours (grue, départ, remise en piste) : 0 en course
 G_JOY		equ	$106a6-$10100		; joystick (lu par le jeu, écrit par son $118)
 G_KEYS		equ	$6f02c-$10100		; touches enfoncées ($B3), par code clavier
 CAM_JUMP	equ	$02000000		; écart (x, y ou z) au-delà duquel la caméra a sauté
@@ -699,7 +700,15 @@ kbd_joy:
 .k4:	cmp.b	#$b3,$39(a0)			; Espace : tir
 	bne.s	.k5
 	or.b	#$10,d0
-.k5:	move.b	kj_prev,d1
+.k5:	cmp.b	#$b3,$3b(a0)			; F1 : logique normale / doublée
+	seq	d1
+	cmp.b	f1_prev,d1
+	beq.s	.k6
+	move.b	d1,f1_prev
+	tst.b	d1
+	beq.s	.k6
+	not.b	dbl_req
+.k6:	move.b	kj_prev,d1
 	move.b	d0,kj_prev
 	or.b	d0,d1
 	beq.s	.out
@@ -762,7 +771,10 @@ detect_game:
 	beq.s	.nointerp
 	move.l	#interp_wait,G_WAITCALL+2(a0)	; jsr interp_wait
 	move.w	#1,interp_on
+	bra.s	.hooked
 .nointerp:
+	move.l	#tick_hook,G_WAITCALL+2(a0)	; jsr tick_hook (F1 : logique doublée)
+.hooked:
 	bsr	turbo_reloc			; adresses du jeu dans turbo.s
 	tst.w	icache_on			; code que le jeu modifie : cache vidé
 	beq.s	.nocc
@@ -978,6 +990,100 @@ interp_wait:
 	movem.l	(sp)+,d0-d7/a0-a6
 	jmp	([wait_addr])			; attente et échange des écrans du jeu
 
+; ---------------------------------------------------------------------------
+; Logique doublée (touche F1) : le jeu fait un tour toutes les 3 VBL au lieu de 6, avec un
+; pas de temps moitié ; chaque image est une vraie image du jeu (16,7 par seconde au lieu
+; de 8,33, si le tour tient en 3 VBL). Appelée à la place de « jsr $4B0A6 » (attente de fin
+; de tour, qui recharge le compteur de VBL) : on pose ou retire les modifications, puis
+; l'attente. Seulement pendant la course proprement dite (compte à rebours $109C9 nul) : la
+; grue, le départ et la remise en piste restent au rythme d'origine (ils comptent en tours).
+; Modifications (mesurées contre le jeu d'origine dans le moteur fidèle, replica/js) :
+;  * facteur de pas #$EE -> #$77 sur les 22 sites (physique, adversaire, compteurs $4B124) ;
+;  * 6 -> 3 VBL par tour ($4B0C2) ;
+;  * réalignement du cap sans pas de temps ($4E702) : divisé par deux ;
+;  * amortisseur proportionnel à la variation de compression par tour ($4EE64) : doublé.
+; Dégâts : mêmes passages rejoués depuis un même état (1 167, 8 circuits), 13 % de plus
+; qu'en normal en moyenne, sans correction (dans le bruit d'un circuit à l'autre).
+; La table dbl_jsr (« move.w force,d0 » <-> « jsr routine ») reste disponible, vide.
+tick_hook:
+	movem.l	d0-d3/a0-a2/a6,-(sp)
+	move.l	game_base,a6
+	moveq	#0,d0
+	tst.b	dbl_req
+	beq.s	.w
+	tst.b	G_CD(a6)
+	bne.s	.w
+	moveq	#1,d0
+.w:	cmp.b	dbl_on,d0
+	beq.s	.same
+	move.b	d0,dbl_on
+	bsr.s	dbl_patch
+.same:	movem.l	(sp)+,d0-d3/a0-a2/a6
+	jmp	([wait_addr])
+
+; d0.b = 1 : pose, 0 : retire (chaque site vérifié avant d'être modifié) ; a6 = base
+dbl_patch:
+	lea	dbl_dt,a1
+.d:	move.l	(a1)+,d1
+	beq.s	.words
+	lea	-$10100+3(a6,d1.l),a0
+	tst.b	d0
+	beq.s	.dr
+	cmp.b	#$ee,(a0)
+	bne.s	.d
+	move.b	#$77,(a0)
+	bra.s	.d
+.dr:	cmp.b	#$77,(a0)
+	bne.s	.d
+	move.b	#$ee,(a0)
+	bra.s	.d
+.words:	lea	dbl_words,a1
+.m:	move.l	(a1)+,d1
+	beq.s	.jsr
+	move.w	(a1)+,d2			; d'origine
+	move.w	(a1)+,d3			; logique doublée
+	lea	-$10100(a6,d1.l),a0
+	tst.b	d0
+	beq.s	.mr
+	cmp.w	(a0),d2
+	bne.s	.m
+	move.w	d3,(a0)
+	bra.s	.m
+.mr:	cmp.w	(a0),d3
+	bne.s	.m
+	move.w	d2,(a0)
+	bra.s	.m
+.jsr:	lea	dbl_jsr,a1			; « move.w ...,d0 » <-> « jsr routine » (vide)
+.k:	move.l	(a1)+,d1
+	beq.s	.flush
+	move.l	(a1)+,a2
+	move.l	(a1)+,d2
+	add.l	a6,d2
+	sub.l	#$10100,d2			; adresse de la force dans le jeu chargé
+	lea	-$10100(a6,d1.l),a0
+	tst.b	d0
+	beq.s	.kr
+	cmp.w	#$3039,(a0)
+	bne.s	.k
+	cmp.l	2(a0),d2
+	bne.s	.k
+	move.w	#$4eb9,(a0)
+	move.l	a2,2(a0)
+	bra.s	.k
+.kr:	cmp.w	#$4eb9,(a0)
+	bne.s	.k
+	cmp.l	2(a0),a2
+	bne.s	.k
+	move.w	#$3039,(a0)
+	move.l	d2,2(a0)
+	bra.s	.k
+.flush:	tst.w	is_030				; code modifié : vider le cache d'instructions
+	beq.s	.nf
+	movec	cacr,d1
+	bset	#3,d1
+	movec	d1,cacr
+.nf:	rts
+
 ; image extrapolée inachevée quand le tour finit : la VBL fait reprendre ici (au retour
 ; d'interruption) ; pile du rendu abandonnée, état du jeu rétabli comme après un rendu
 t_abort:
@@ -1070,6 +1176,20 @@ turbo_patch:
 	bra.s	.t
 .done:	movem.l	(sp)+,d0-d2/a1-a2
 	rts
+
+	data
+dbl_dt:		dc.l	$48a08,$4b124,$4efaa,$4efc6,$4efe2,$4f014,$4f02c,$4f044,$4f136,$4f14e
+		dc.l	$4f166,$4f180,$4f198,$4f1b0,$507fe,$509ea,$50ed4,$50eec,$50f06,$50f1e
+		dc.l	$50f38,$50f50,0
+dbl_words:	dc.l	$4b0c4
+		dc.w	$0006,$0003
+		dc.l	$4e702
+		dc.w	$ee48,$e048
+		dc.l	$4ee64
+		dc.w	$0114,$0228
+		dc.l	0
+dbl_jsr:		dc.l	0
+	text
 
 	section	grel,data
 grel_start:
@@ -1470,6 +1590,9 @@ cache_on_value:	ds.l	1
 icache_on:	ds.w	1
 interp_on:	ds.w	1
 kj_prev:	ds.b	1
+f1_prev:	ds.b	1
+dbl_req:	ds.b	1
+dbl_on:		ds.b	1
 		even
 have_prev:	ds.w	1
 last_call:	ds.l	1

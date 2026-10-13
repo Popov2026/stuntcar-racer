@@ -52,17 +52,29 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   versions réécrites pour le 68030 (tracé des bords de polygones, sprites du cockpit), au
   résultat identique octet pour octet : chaque image est une vraie image du jeu.
 
+  Touche F1 : JEU FLUIDE (logique doublée), F1 à nouveau : jeu normal. Le jeu fait alors
+  un tour toutes les 3 VBL au lieu de 6, avec un pas de temps moitié : 16,7 vraies images
+  par seconde, sans image inventée. Actif pendant la course proprement dite ; la grue, le
+  départ et la remise en piste gardent le rythme d'origine (8,33). Pour que la voiture se
+  comporte comme dans le jeu d'origine, SCRF030 modifie, le temps de ce mode : le facteur
+  de pas des 22 calculs qui en dépendent (physique, adversaire, compteurs), le nombre de VBL
+  par tour, le réalignement du cap et l'amortisseur (qui comptaient par tour). Mesuré contre le jeu d'origine (moteur fidèle du projet, même code
+  68000) : mêmes vitesses, virages et consommation du turbo, à 1 % près, jusqu'au premier
+  saut ; ensuite les trajectoires divergent comme deux parties réelles. Dégâts : mêmes
+  passages rejoués depuis un même état, 13 % de plus en moyenne. Sous Hatari (68030 exact) : une image toutes les
+  3 VBL en course ; si une scène est trop chargée, le tour déborde et le jeu ralentit un
+  instant, comme sur ST.
+
   Option F (expérimentale) : une ou deux images EXTRAPOLÉES de plus par tour (rendu du jeu
   rappelé avec caméra et adversaire prolongés), environ 20 images/s sous Hatari. Elles
   ont des défauts visibles : la caméra prolongée se trompe sur les bosses et les sauts
   (l'image tressaute), et le jeu dessine certaines choses (roues avant, tableau de bord)
-  dans l'écran affiché, qui manquent alors sur ces images. Elle n'est donc plus active
-  par défaut. Une vraie hausse du nombre d'images demanderait de faire tourner la logique
-  du jeu plus souvent (pas de temps divisé par deux).
+  dans l'écran affiché, qui manquent alors sur ces images. Préférez F1.
 
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
   en course (un vrai joystick marche toujours).
+    F1          jeu normal / jeu fluide (voir « Vitesse »)
     menus       haut/bas pour choisir, bouton (ou Espace) pour valider ; nom au clavier
     course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
     après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)
