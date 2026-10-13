@@ -52,13 +52,15 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   versions réécrites pour le 68030 (tracé des bords de polygones, sprites du cockpit), au
   résultat identique octet pour octet : chaque image est une vraie image du jeu.
 
-  Touche F1 : JEU FLUIDE. Chaque appui passe au niveau suivant :
+  Touche F1 : JEU FLUIDE (F1 à nouveau : jeu normal).
     normal        un tour de jeu toutes les 6 VBL : 8,33 images/s (jeu d'origine)
-    fluide (x2)   toutes les 3 VBL, pas de temps moitié : 16,7 images/s
-    très fluide   toutes les 2 VBL, pas de temps divisé par 3 : 25 images/s, et
-    (x3)          3 VBL (16,7) pour le tour suivant dès qu'un tour ne tient pas en 2
-  puis de nouveau normal. Ce sont de vraies images du jeu, sans image inventée. Actif
-  pendant la course proprement dite ; la grue, le départ et la remise en piste gardent le
+    fluide        toutes les 3 VBL, pas de temps moitié : 16,7 images/s, cadence stable
+                  sur un Falcon030 à 16 MHz (un tour de course y tient presque toujours)
+  Avec l'option 3 (SCRF030.INF), F1 passe en « très fluide » : toutes les 2 VBL, pas de
+  temps divisé par 3, 25 images/s, et 3 VBL pour le tour suivant dès qu'un tour ne tient
+  pas en 2. Sur un Falcon à 16 MHz, la cadence varie alors entre 25 et 16,7 selon la
+  scène : réservé aux Falcon accélérés. Ce sont de vraies images du jeu, sans image
+  inventée. Actif pendant la course proprement dite ; la grue, le départ et la remise en piste gardent le
   rythme d'origine. Pour que la voiture se comporte comme dans le jeu d'origine, SCRF030
   modifie, le temps de ce mode : le facteur de pas des 22 calculs qui en dépendent
   (physique, adversaire, compteurs), le nombre de VBL par tour, le réalignement du cap,
@@ -69,7 +71,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   premier saut ; ensuite les trajectoires divergent comme deux parties réelles. Dégâts :
   mêmes passages rejoués depuis un même état, 13 à 15 % de plus en moyenne. Sous Hatari
   (68030 16 MHz exact), en très fluide : une image toutes les 2 VBL sur l'essentiel de la
-  course, quelques tours à 3 VBL quand la scène est chargée.
+  course, des tours à 3 VBL quand la scène est chargée (environ 1 sur 10) ; en fluide, une
+  image toutes les 3 VBL, à quelques tours près sur des centaines.
 
   Option F (expérimentale) : une ou deux images EXTRAPOLÉES de plus par tour (rendu du jeu
   rappelé avec caméra et adversaire prolongés), environ 20 images/s sous Hatari. Elles
@@ -80,7 +83,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
   en course (un vrai joystick marche toujours).
-    F1          normal -> fluide -> très fluide -> normal (voir « Vitesse »)
+    F1          jeu normal / jeu fluide (voir « Vitesse »)
     menus       haut/bas pour choisir, bouton (ou Espace) pour valider ; nom au clavier
     course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
     après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)
@@ -107,6 +110,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                T     sans les routines réécrites pour le 68030
                K     caches du 68030 coupés
                F     images extrapolées (expérimental, voir plus haut)
+               3     F1 passe en très fluide (25 images/s) : Falcon accéléré
 
 
 4. Tester sous Hatari (Linux, macOS)

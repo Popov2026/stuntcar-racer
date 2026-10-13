@@ -21,7 +21,7 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
 `N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine : ni caches, ni routines
-réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental) — touches au
+réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental), `3` (F1 en logique ×3) — touches au
 lancement, ligne de commande ou première ligne de `SCRF030.INF`.
 
 Commandes : le jeu se pilote au **joystick** (port 1), menus compris (sa routine de lecture
@@ -32,8 +32,10 @@ touches est enfoncée. Sous Hatari, sans émulation du joystick comme avec `--jo
 
 ### Logique accélérée (touche F1) : 8,33 → 16,7 ou 25 vraies images/s
 
-F1 fait défiler : normal → fluide (×2 : un tour toutes les 3 VBL) → très fluide (×3 : toutes
-les 2 VBL, adaptatif) → normal. À la place de `jsr $4B0A6` (attente de fin de tour, en
+F1 bascule entre normal et fluide (×2 : un tour toutes les 3 VBL, cadence stable sur un
+Falcon030 à 16 MHz) ; avec l'option `3`, entre normal et très fluide (×3 : toutes les 2 VBL,
+adaptatif ; sur 16 MHz la cadence varie entre 2 et 3 VBL selon la scène, d'où l'option,
+pour les Falcon accélérés). À la place de `jsr $4B0A6` (attente de fin de tour, en
 `$4AB90`), `tick_hook` décide à chaque tour : niveau demandé si la course est en cours
 (compte à rebours `$109C9` nul ; la grue, le départ et la remise en piste comptent en tours
 et gardent le rythme d'origine). En très fluide, on reste à 2 VBL tant que le tour y tient
@@ -62,7 +64,9 @@ donné les pics de force diffèrent (2 496 et 3 271 en normal, 1 851 et 2 229 pu
 1 845 en ×2), mais majorer la force pour les dégâts surcompense (× 1,17 : + 46 %).
 
 Sous Hatari (`--cpu-exact on`, 68030 à 16 MHz), en course : ×2, un échange d'écran toutes
-les 3 VBL (724 sur 865, le reste : grue à 6 VBL, et 6 tours à 4 ou 5) ; ×3 adaptatif, par
+les 3 VBL (724 sur 865, le reste : grue à 6 VBL, et 6 tours à 4 ou 5 ; dans une autre partie,
+470 à 3 VBL et 11 à 4, tous regroupés sur une seconde, la voiture en tonneau contre un mur
+juste avant une chute) ; ×3 adaptatif, par
 tranches de 10 s : 166, 249, 76, 189, 143 et 77 images à 2 VBL contre 38, 1, 32, 18, 1 et
 14 à 3 VBL et quelques-unes à 4 (le reste : grue). Un tour de course prend le plus souvent
 moins de 2 VBL (profil : 1,85 VBL en moyenne grue comprise ; à la fin du calcul, 2 VBL

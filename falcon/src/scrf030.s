@@ -51,6 +51,7 @@
 ;   O              jeu d'origine : ni image intermédiaire, ni caches
 ;   T              sans les routines réécrites pour le 68030 (turbo.s)
 ;   F              images extrapolées (expérimental : défauts possibles)
+;   3              F1 passe en logique x3 (25 images/s) au lieu de x2 : Falcon accéléré
 ;   K              caches du 68030 coupés (images extrapolées et turbo.s gardées)
 ;
 ; Assemblage : vasmm68k_mot -Ftos -m68030 -devpac -nosym -o SCRF030.PRG scrf030.s
@@ -72,6 +73,7 @@ OPT_ORIG	equ	3
 OPT_NOTURBO	equ	4
 OPT_FLUID	equ	5
 OPT_NOCACHE	equ	6
+OPT_X3		equ	7
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -272,8 +274,11 @@ parse_options:
 	cmp.b	#10,d0
 	beq.s	.eol
 	cmp.b	#'8',d0
-	bne.s	.notspeed
+	bne.s	.not8
 	bset	#OPT_8MHZ,d4
+.not8:	cmp.b	#'3',d0
+	bne.s	.notspeed
+	bset	#OPT_X3,d4
 .notspeed:
 	and.b	#$df,d0				; majuscule
 	cmp.b	#'C',d0
@@ -710,10 +715,14 @@ kbd_joy:
 	move.b	d1,f1_prev
 	tst.b	d1
 	beq.s	.k6
-	addq.b	#1,dbl_req			; 0 normal, 1 : x2, 2 : x3 adaptatif, puis normal
-	cmp.b	#3,dbl_req
-	blo.s	.k6
+	tst.b	dbl_req			; normal <-> fluide : x2 (cadence stable), ou x3
+	beq.s	.f1on				; adaptatif avec l'option 3 (Falcon accéléré)
 	clr.b	dbl_req
+	bra.s	.k6
+.f1on:	move.b	#1,dbl_req
+	btst	#OPT_X3,options+1
+	beq.s	.k6
+	move.b	#2,dbl_req
 .k6:	move.b	kj_prev,d1
 	move.b	d0,kj_prev
 	or.b	d0,d1
@@ -1014,7 +1023,8 @@ interp_wait:
 ;    multiplié par le facteur ;
 ;  * chrono : 0,13 s ajoutée à chaque tour ($4B514) -> 13 x n / 6 centièmes par tour de
 ;    n VBL, avec le reste (0,06/0,07, ou 0,04/0,04/0,05).
-; F1 : normal -> x2 -> x3 adaptatif (x2 dès qu'un tour ne tient pas en 2 VBL) -> normal.
+; F1 : normal <-> x2 (cadence stable sur Falcon 16 MHz) ; avec l'option 3, normal <-> x3
+; adaptatif (x2 dès qu'un tour ne tient pas en 2 VBL : pour un Falcon accéléré).
 ; Dégâts : mêmes passages rejoués depuis un même état, + 13 % en x2 sans correction.
 tick_hook:
 	movem.l	d0-d3/a0-a2/a6,-(sp)
