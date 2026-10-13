@@ -20,8 +20,8 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 | Disquette d'origine : BPB à 0 secteur par cluster | `scr_tool.py falcon` reconstruit une disquette FAT12 standard, `F030AUTO.PRG` (même lanceur, résident, pour le dossier `AUTO`) avant le menu `DEBUT.PRG` |
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
-`N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine, sans mode fluide), `T` (sans
-les routines réécrites), `I` (sans images extrapolées), `K` (caches coupés) — touches au
+`N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine : ni caches, ni routines
+réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental) — touches au
 lancement, ligne de commande ou première ligne de `SCRF030.INF`.
 
 Commandes : le jeu se pilote au **joystick** (port 1), menus compris (sa routine de lecture
@@ -30,7 +30,20 @@ des touches, `$46DAC`, traduit le joystick en codes de flèches). SCRF030 ajoute
 Espace, écrits dans le joystick du jeu (`$106A6`, format de son `$118`) tant qu'une de ces
 touches est enfoncée. Sous Hatari, sans émulation du joystick comme avec `--joystick 1`.
 
-### Mode fluide : 8,33 → 20,5 images/s
+### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
+
+**Par défaut depuis le 13/10 : désactivées.** Le lanceur rallume les caches et pose les routines
+réécrites (mêmes images, octet pour octet), sans images supplémentaires : chaque image est une
+vraie image du jeu, 8,33 images/s. Les images extrapolées ont deux défauts de fond, visibles
+en jeu : la caméra prolongée se trompe dès que le mouvement change (bosses, sauts, virages :
+l'image tressaute), et le jeu dessine une partie du cockpit (roues avant qui suivent la
+suspension, lignes 122-175, depuis sa VBL) et du tableau de bord directement dans l'écran
+affiché (`$56C70`, motif « `G_DRAW` = `G_DISP` » le temps du dessin, `$10450` et une dizaine
+d'autres) : ces dessins manquent sur les images extrapolées, des morceaux de l'image sautent.
+La voie propre serait une logique du jeu deux fois plus fréquente (compteur `$4B0C2` rechargé
+à 3, facteur de pas `#$EE` des 21 sites physiques divisé par deux, compteurs par tour à
+revoir) : de vraies images à 16,7 par seconde.
+
 
 Le jeu fait un tour (logique + rendu `$51BCC` + échange d'écran) au plus toutes les 6 VBL
 (compteur `$4EC20` rechargé à 6) : 8,33 images/s sur Falcon (6,5 environ sur ST, dont le rendu

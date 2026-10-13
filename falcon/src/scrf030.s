@@ -22,13 +22,16 @@
 ;  * son : sortie YM2149 (PSG) dirigée vers le codec ;
 ;  * en option, mode « 8 MHz + bus STE » proche d'un ST.
 ;
-; Mode fluide (par défaut) : quand le jeu installe sa VBL, le relais le reconnaît
-; (signature) et
+; Quand le jeu installe sa VBL, le relais le reconnaît (signature) et
+;  * fait des flèches et d'Espace un joystick (kbd_joy) ;
 ;  * rallume les caches du 68030 (le jeu est en place ; le cache d'instructions
 ;    est vidé à chaque VBL par prudence) : un tour de jeu passe de 2,9 à 1,8 VBL ;
 ;  * remplace des routines du jeu par des versions réécrites pour le 68030, au
 ;    résultat identique (turbo.s : tracé des bords de polygones, sprites) ;
-;  * dessine une ou deux IMAGES EXTRAPOLÉES par tour : la logique du jeu tourne
+;  * avec l'option F seulement (expérimental), dessine une ou deux IMAGES
+;    EXTRAPOLÉES par tour. Elles ont des défauts : la caméra prolongée se trompe sur
+;    les bosses (l'image tressaute) et le jeu dessine certaines choses (roues avant,
+;    tableau de bord) dans l'écran affiché, qui manquent alors. Principe : la logique du jeu tourne
 ;    toujours à 8,33 tours/s (une fois toutes les 6 VBL, comme sur ST), son rendu et
 ;    l'échange des écrans restent à leur place ; pendant l'attente de fin de tour
 ;    ($4B0A6), le rendu du jeu ($51BCC) est rappelé, caméra et adversaire prolongés de
@@ -47,7 +50,7 @@
 ;   N / Alternate  pas de correction 60 Hz
 ;   O              jeu d'origine : ni image intermédiaire, ni caches
 ;   T              sans les routines réécrites pour le 68030 (turbo.s)
-;   I              sans images extrapolées (caches et turbo.s gardés)
+;   F              images extrapolées (expérimental : défauts possibles)
 ;   K              caches du 68030 coupés (images extrapolées et turbo.s gardées)
 ;
 ; Assemblage : vasmm68k_mot -Ftos -m68030 -devpac -nosym -o SCRF030.PRG scrf030.s
@@ -67,7 +70,7 @@ OPT_CACHE	equ	1
 OPT_NO60	equ	2
 OPT_ORIG	equ	3
 OPT_NOTURBO	equ	4
-OPT_NOINTERP	equ	5
+OPT_FLUID	equ	5
 OPT_NOCACHE	equ	6
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
@@ -281,10 +284,10 @@ parse_options:
 .noto:	cmp.b	#'T',d0
 	bne.s	.notb
 	bset	#OPT_NOTURBO,d4
-.notb:	cmp.b	#'I',d0
-	bne.s	.noti
-	bset	#OPT_NOINTERP,d4
-.noti:	cmp.b	#'K',d0
+.notb:	cmp.b	#'F',d0
+	bne.s	.notf
+	bset	#OPT_FLUID,d4
+.notf:	cmp.b	#'K',d0
 	bne.s	.next
 	bset	#OPT_NOCACHE,d4
 .next:	dbf	d1,.loop
@@ -314,7 +317,11 @@ print_options:
 	beq.s	.o5
 	lea	txt_ot(pc),a0
 	bsr	print
-.o5:	lea	txt_crlf(pc),a0
+.o5:	btst	#OPT_FLUID,d3
+	beq.s	.o6
+	lea	txt_of(pc),a0
+	bsr	print
+.o6:	lea	txt_crlf(pc),a0
 	bra	print
 
 ; ---------------------------------------------------------------------------
@@ -751,8 +758,8 @@ detect_game:
 	move.w	#1,icache_on
 .nocache:
 	clr.w	have_prev
-	btst	#OPT_NOINTERP,options+1
-	bne.s	.nointerp
+	btst	#OPT_FLUID,options+1		; images extrapolées : option F seulement
+	beq.s	.nointerp
 	move.l	#interp_wait,G_WAITCALL+2(a0)	; jsr interp_wait
 	move.w	#1,interp_on
 .nointerp:
@@ -1378,6 +1385,7 @@ txt_oc:	dc.b	" caches",0
 txt_on:	dc.b	" 60Hz",0
 txt_oo:	dc.b	" origine",0
 txt_ot:	dc.b	" sans-turbo",0
+txt_of:	dc.b	" fluide",0
 txt_crlf:
 	dc.b	13,10,0
 txt_addr32:

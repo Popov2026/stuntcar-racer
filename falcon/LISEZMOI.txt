@@ -32,7 +32,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
       la fin de cette zone) ; le mode, l'écran et les palettes sont rétablis au retour ;
     - coupe les caches du 68030 pendant le chargement (le jeu est décompressé puis relogé
       avant d'être exécuté : avec le cache d'instructions, le 68030 exécuterait d'anciennes
-      données), puis les rallume une fois le jeu en place (voir « mode fluide ») ;
+      données), puis les rallume une fois le jeu en place (voir « Vitesse ») ;
     - déplace la table des vecteurs (registre VBR) vers une table de relais qui renvoie
       chaque exception au vecteur écrit par le jeu en mémoire basse ($70, $118...), ce qui
       permet :
@@ -46,23 +46,19 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     - dirige le son du YM2149 vers le codec du Falcon.
   F030AUTO.PRG fait la même chose depuis le dossier AUTO et reste résident.
 
-  Mode fluide (par défaut) : sur ST, le jeu affiche 6,5 images/s environ ; sur Falcon, sans
-  rien changer, 8,33 : sa logique avance au plus une fois toutes les 6 VBL, et chaque tour
-  donne une image. Quand le jeu installe sa VBL, SCRF030 le reconnaît et :
-    * rallume les caches (un tour de jeu : 1,8 VBL au lieu de 2,9) ;
-    * remplace des routines du jeu par des versions réécrites pour le 68030 (tracé des
-      bords de polygones, sprites du cockpit), au résultat identique octet pour octet ;
-    * dessine une ou deux images de plus par tour : le rendu du jeu est rappelé avec la
-      caméra et l'adversaire prolongés dans le sens du dernier déplacement, dans des
-      écrans à lui, que la VBL affiche à mi-tour (ou au tiers et aux deux tiers).
-  Résultat sous Hatari (68030 exact, caches émulés), voiture en course : 20,5 images/s
-  (une image toutes les 2 VBL dans environ la moitié des tours, toutes les 3 ailleurs). La logique du jeu n'est pas touchée : ce
-  que le rendu supplémentaire modifie est sauvegardé puis rétabli, et une même partie
-  donne exactement les mêmes états, tour par tour, avec et sans ce mode.
-  (Corrigé le 12/10 : la reconnaissance du jeu, faite dans l'interruption VBL, abîmait un
-  registre ; selon l'instant, le jeu recopiait alors son tableau des pilotes dans le code
-  de SCRF030 : collisions au hasard, adversaire figé, voiture qui ne tourne plus, plantage.
-  Les versions précédentes sont à remplacer.)
+  Vitesse : sur ST, le jeu affiche 6,5 images/s environ ; sur Falcon, 8,33 : sa logique
+  avance une fois toutes les 6 VBL et chaque tour donne une image. Quand le jeu installe sa
+  VBL, SCRF030 le reconnaît, rallume les caches et remplace des routines du jeu par des
+  versions réécrites pour le 68030 (tracé des bords de polygones, sprites du cockpit), au
+  résultat identique octet pour octet : chaque image est une vraie image du jeu.
+
+  Option F (expérimentale) : une ou deux images EXTRAPOLÉES de plus par tour (rendu du jeu
+  rappelé avec caméra et adversaire prolongés), environ 20 images/s sous Hatari. Elles
+  ont des défauts visibles : la caméra prolongée se trompe sur les bosses et les sauts
+  (l'image tressaute), et le jeu dessine certaines choses (roues avant, tableau de bord)
+  dans l'écran affiché, qui manquent alors sur ces images. Elle n'est donc plus active
+  par défaut. Une vraie hausse du nombre d'images demanderait de faire tourner la logique
+  du jeu plus souvent (pas de temps divisé par deux).
 
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
@@ -89,10 +85,10 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     Shift      / 8   8 MHz et bus STE (au plus près d'un ST)
     Control    / C   laisser les caches du 68030 tels que le TOS les a mis (déconseillé)
     Alternate  / N   pas de correction 60 Hz
-               O     jeu d'origine : ni image intermédiaire, ni caches rallumés
-               T     sans les routines réécrites (mode fluide quand même)
-               I     sans images extrapolées (caches et routines réécrites gardés)
-               K     caches du 68030 coupés (images extrapolées et routines gardées)
+               O     jeu d'origine : ni caches rallumés, ni routines réécrites
+               T     sans les routines réécrites pour le 68030
+               K     caches du 68030 coupés
+               F     images extrapolées (expérimental, voir plus haut)
 
 
 4. Tester sous Hatari (Linux, macOS)
