@@ -30,35 +30,44 @@ des touches, `$46DAC`, traduit le joystick en codes de flèches). SCRF030 ajoute
 Espace, écrits dans le joystick du jeu (`$106A6`, format de son `$118`) tant qu'une de ces
 touches est enfoncée. Sous Hatari, sans émulation du joystick comme avec `--joystick 1`.
 
-### Logique doublée (touche F1) : 8,33 → 16,7 vraies images/s
+### Logique accélérée (touche F1) : 8,33 → 16,7 ou 25 vraies images/s
 
-F1 bascule entre le jeu normal et le jeu fluide. À la place de `jsr $4B0A6` (attente de fin de
-tour, en `$4AB90`), `tick_hook` décide à chaque tour : logique doublée si F1 l'a demandée et si
-la course est en cours (compte à rebours `$109C9` nul ; la grue, le départ et la remise en
-piste comptent en tours et gardent le rythme d'origine). Il pose ou retire, en vérifiant les
-octets d'origine, puis vide le cache d'instructions :
+F1 fait défiler : normal → fluide (×2 : un tour toutes les 3 VBL) → très fluide (×3 : toutes
+les 2 VBL, adaptatif) → normal. À la place de `jsr $4B0A6` (attente de fin de tour, en
+`$4AB90`), `tick_hook` décide à chaque tour : niveau demandé si la course est en cours
+(compte à rebours `$109C9` nul ; la grue, le départ et la remise en piste comptent en tours
+et gardent le rythme d'origine). En très fluide, on reste à 2 VBL tant que le tour y tient
+(compteur de VBL non nul à l'entrée), on passe à 3 VBL pour le tour suivant sinon, et on
+revient à 2 dès qu'un tour à 3 VBL a pris moins de 2 VBL. `dbl_patch` pose le niveau, chaque
+site vérifié (une des valeurs connues), puis vide le cache d'instructions :
 
-| Site | Origine | Doublé | Pourquoi |
-|---|---|---|---|
-| 22 × `move.b #$EE,Dn` (`$48A08`, `$4B124`, `$4EFAA`…`$4F1B0`, `$507FE`, `$509EA`, `$50ED4`…`$50F50`) | `$EE` | `$77` | facteur de pas : intégrations de la physique, avance de l'adversaire, accumulateur `$109B9` qui cadence les compteurs en temps de jeu (`$109B7` : dégâts, compte à rebours, carburant du turbo) |
-| `$4B0C2` `move.b #6,$4EC20` | 6 | 3 | VBL par tour |
-| `$4E702` `lsr.w #7` | 7 | 8 | réalignement du cap vers la piste, ajouté au lacet à chaque tour sans pas de temps |
-| `$4EE64` | `$114` | `$228` | amortisseur : proportionnel à la variation de compression d'un tour à l'autre (`$10B04`) |
-| `$4B514` `move.b #$13,d0` | `$13` | `$06`/`$07` en alternance | chrono (`$11002` minutes, `$1101A` secondes, `$11032` centièmes, BCD) : 0,13 s ajoutée à chaque tour (le jeu d'origine compte donc 8 % de trop : un tour dure 0,12 s) |
+| Site | ×1 | ×2 | ×3 | Pourquoi |
+|---|---|---|---|---|
+| 22 × `move.b #$EE,Dn` (`$48A08`, `$4B124`, `$4EFAA`…`$4F1B0`, `$507FE`, `$509EA`, `$50ED4`…`$50F50`) | `$EE` | `$77` | `$4F` | facteur de pas : intégrations de la physique, avance de l'adversaire, accumulateur `$109B9` qui cadence les compteurs en temps de jeu (`$109B7` : dégâts, compte à rebours, carburant du turbo) |
+| `$4B0C2` `move.b #6,$4EC20` | 6 | 3 | 2 | VBL par tour |
+| `$4E6FC`-`$4E703` (`muls`, `asl`, `swap`, `lsr.w #7`) | d'origine | `jsr yaw_div` | `jsr yaw_div` | réalignement du cap vers la piste, ajouté au lacet à chaque tour sans pas de temps : même calcul, × 1/2 ou × 1/3 (`mulu.w #$8000` / `#$5556`, `swap`) |
+| `$4EE64` | `$114` | `$228` | `$33C` | amortisseur : proportionnel à la variation de compression d'un tour à l'autre (`$10B04`) |
+| `$4B514` `move.b #$13,d0` | `$13` | 13 × n / 6 | 13 × n / 6 | chrono (`$11002` minutes, `$1101A` secondes, `$11032` centièmes, BCD) : 0,13 s par tour de 6 VBL, donc 13 × n / 6 centièmes par tour de n VBL, reste gardé (le jeu d'origine compte 8 % de trop : un tour dure 0,12 s) |
 
 Validation dans le moteur fidèle (`replica/js/engine.js`, le code 68000 du jeu exécuté en
-JavaScript), course normale contre course doublée, mêmes commandes au même instant : vitesse,
-lacet, consommation du turbo à 1 % près jusqu'au premier saut (sans les corrections du cap
-et de l'amortisseur : départ 15 % plus lent, voiture qui se réaligne deux fois trop vite).
-Après un saut, les deux parties divergent comme deux parties réelles. Dégâts : comparer des
-parties entières ne veut rien dire (un saut raté change tout) ; on rejoue donc les mêmes 12
-tours depuis un même état, en normal puis en doublé, toutes les 6 tours de 8 parties
-(1 167 passages, 8 circuits) : 5 789 contre 6 524 points de dégâts, + 13 % sans correction
-(de − 17 % à + 42 % selon les circuits). Sur un saut donné les pics de force diffèrent
-(2 496 et 3 271 en normal, 1 851 et 2 229 puis 1 454 et 1 845 en doublé), mais majorer la
-force pour les dégâts surcompense (× 1,17 : + 46 %) : pas de correction. Sous Hatari (`--cpu-exact on`), en
-course : un échange d'écran toutes les 3 VBL (724 sur 865, le reste : grue à 6 VBL, et 6 tours
-à 4 ou 5 VBL).
+JavaScript), `falcon/test/double_test.js` : course normale contre course accélérée, mêmes
+commandes au même instant : vitesse, lacet, chrono à 1 % près jusqu'au premier saut, en ×2
+comme en ×3 (sans les corrections du cap et de l'amortisseur : départ 15 % plus lent,
+voiture qui se réaligne deux fois trop vite). Après un saut, les deux parties divergent
+comme deux parties réelles. Dégâts : comparer des parties entières ne veut rien dire (un
+saut raté change tout) ; on rejoue donc les mêmes 12 tours depuis un même état, en normal
+puis accéléré, toutes les 6 tours de 8 parties (1 167 passages, 8 circuits) : 5 789 points
+de dégâts en normal, 6 524 en ×2 (+ 13 %), 6 664 en ×3 (+ 15 %), sans correction. Sur un saut
+donné les pics de force diffèrent (2 496 et 3 271 en normal, 1 851 et 2 229 puis 1 454 et
+1 845 en ×2), mais majorer la force pour les dégâts surcompense (× 1,17 : + 46 %).
+
+Sous Hatari (`--cpu-exact on`, 68030 à 16 MHz), en course : ×2, un échange d'écran toutes
+les 3 VBL (724 sur 865, le reste : grue à 6 VBL, et 6 tours à 4 ou 5) ; ×3 adaptatif, par
+tranches de 10 s : 166, 249, 76, 189, 143 et 77 images à 2 VBL contre 38, 1, 32, 18, 1 et
+14 à 3 VBL et quelques-unes à 4 (le reste : grue). Un tour de course prend le plus souvent
+moins de 2 VBL (profil : 1,85 VBL en moyenne grue comprise ; à la fin du calcul, 2 VBL
+restantes sur 3 dans 81 % des tours) ; le profil est plat (routines réécrites 28 % du
+travail, une trentaine de routines du jeu entre 1 et 6 %).
 
 ### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
 
@@ -70,7 +79,7 @@ l'image tressaute), et le jeu dessine une partie du cockpit (roues avant qui sui
 suspension, lignes 122-175, depuis sa VBL) et du tableau de bord directement dans l'écran
 affiché (`$56C70`, motif « `G_DRAW` = `G_DISP` » le temps du dessin, `$10450` et une dizaine
 d'autres) : ces dessins manquent sur les images extrapolées, des morceaux de l'image sautent.
-La voie propre est la logique doublée (touche F1, ci-dessus).
+La voie propre est la logique accélérée (touche F1, ci-dessus).
 
 
 Le jeu fait un tour (logique + rendu `$51BCC` + échange d'écran) au plus toutes les 6 VBL

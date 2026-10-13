@@ -93,6 +93,8 @@ G_END		equ	$73370-$10100		; fin de la BSS du jeu
 G_PIECE_TYPE	equ	$10ce6-$10100		; type de chaque pièce du circuit (bits 0-3)
 G_TYPE_TAB	equ	$13670-$10100		; données des types de pièce
 G_NPIECES	equ	$11114-$10100		; nombre de pièces du circuit
+G_DAMP		equ	$4ee64-$10100		; coefficient de l'amortisseur ($114)
+G_YAW		equ	$4e6fc-$10100		; réalignement du cap (8 octets)
 G_CHRONO	equ	$4b517-$10100		; « move.b #$13,d0 » : centièmes ajoutés au chrono à chaque tour
 G_CD		equ	$109c9-$10100		; compte à rebours (grue, départ, remise en piste) : 0 en course
 G_JOY		equ	$106a6-$10100		; joystick (lu par le jeu, écrit par son $118)
@@ -708,7 +710,10 @@ kbd_joy:
 	move.b	d1,f1_prev
 	tst.b	d1
 	beq.s	.k6
-	not.b	dbl_req
+	addq.b	#1,dbl_req			; 0 normal, 1 : x2, 2 : x3 adaptatif, puis normal
+	cmp.b	#3,dbl_req
+	blo.s	.k6
+	clr.b	dbl_req
 .k6:	move.b	kj_prev,d1
 	move.b	d0,kj_prev
 	or.b	d0,d1
@@ -992,113 +997,128 @@ interp_wait:
 	jmp	([wait_addr])			; attente et échange des écrans du jeu
 
 ; ---------------------------------------------------------------------------
-; Logique doublée (touche F1) : le jeu fait un tour toutes les 3 VBL au lieu de 6, avec un
-; pas de temps moitié ; chaque image est une vraie image du jeu (16,7 par seconde au lieu
-; de 8,33, si le tour tient en 3 VBL). Appelée à la place de « jsr $4B0A6 » (attente de fin
-; de tour, qui recharge le compteur de VBL) : on pose ou retire les modifications, puis
-; l'attente. Seulement pendant la course proprement dite (compte à rebours $109C9 nul) : la
-; grue, le départ et la remise en piste restent au rythme d'origine (ils comptent en tours).
-; Modifications (mesurées contre le jeu d'origine dans le moteur fidèle, replica/js) :
-;  * facteur de pas #$EE -> #$77 sur les 22 sites (physique, adversaire, compteurs $4B124) ;
-;  * 6 -> 3 VBL par tour ($4B0C2) ;
-;  * réalignement du cap sans pas de temps ($4E702) : divisé par deux ;
-;  * amortisseur proportionnel à la variation de compression par tour ($4EE64) : doublé ;
-;  * chrono : 0,13 s ajoutée à chaque tour ($4B514) -> 0,06 et 0,07 en alternance.
-; Dégâts : mêmes passages rejoués depuis un même état (1 167, 8 circuits), 13 % de plus
-; qu'en normal en moyenne, sans correction (dans le bruit d'un circuit à l'autre).
-; La table dbl_jsr (« move.w force,d0 » <-> « jsr routine ») reste disponible, vide.
+; Logique accélérée (touche F1 : normal, x2, x3) : le jeu fait un tour toutes les 3 ou 2 VBL
+; au lieu de 6, avec un pas de temps divisé par 2 ou 3 ; chaque image est une vraie image du
+; jeu (16,7 ou 25 par seconde au lieu de 8,33, si le tour tient dans ses VBL). Appelée à la
+; place de « jsr $4B0A6 » (attente de fin de tour, qui recharge le compteur de VBL) : on pose
+; le niveau voulu, puis l'attente. Seulement pendant la course proprement dite (compte à
+; rebours $109C9 nul) : la grue, le départ et la remise en piste restent au rythme d'origine
+; (ils comptent en tours). Modifications (mesurées contre le jeu d'origine dans le moteur
+; fidèle, replica/js, par falcon/test/double_test.js) :
+;  * facteur de pas #$EE -> #$77 / #$4F sur les 22 sites (physique, adversaire, compteurs
+;    en temps de jeu de l'accumulateur $4B124) ;
+;  * 6 -> 3 / 2 VBL par tour ($4B0C2) ;
+;  * réalignement du cap, ajouté au lacet à chaque tour sans pas de temps ($4E6FC-$4E703) :
+;    remplacé par « jsr yaw_div » (même calcul, divisé par le facteur) ;
+;  * amortisseur proportionnel à la variation de compression d'un tour à l'autre ($4EE64) :
+;    multiplié par le facteur ;
+;  * chrono : 0,13 s ajoutée à chaque tour ($4B514) -> 13 x n / 6 centièmes par tour de
+;    n VBL, avec le reste (0,06/0,07, ou 0,04/0,04/0,05).
+; F1 : normal -> x2 -> x3 adaptatif (x2 dès qu'un tour ne tient pas en 2 VBL) -> normal.
+; Dégâts : mêmes passages rejoués depuis un même état, + 13 % en x2 sans correction.
 tick_hook:
 	movem.l	d0-d3/a0-a2/a6,-(sp)
 	move.l	game_base,a6
 	moveq	#0,d0
-	tst.b	dbl_req
-	beq.s	.w
 	tst.b	G_CD(a6)
 	bne.s	.w
+	move.b	dbl_req,d0
+	cmp.b	#2,d0
+	bne.s	.w
+; x3 adaptatif : 2 VBL par tour tant que le tour y tient, sinon 3 (x2) ; compteur de VBL
+; restantes à l'entrée : en x3 (2 VBL), 0 = débordé ; en x2 (3 VBL), 2 ou plus = le tour
+; a pris moins de 2 VBL
+	move.b	dbl_on,d1
+	cmp.b	#2,d1
+	bne.s	.up
+	tst.b	G_COUNTER(a6)
+	bne.s	.w
+	moveq	#1,d0
+	bra.s	.w
+.up:	cmp.b	#1,d1
+	bne.s	.w
+	cmp.b	#2,G_COUNTER(a6)
+	bhs.s	.w
 	moveq	#1,d0
 .w:	cmp.b	dbl_on,d0
 	beq.s	.same
 	move.b	d0,dbl_on
 	bsr.s	dbl_patch
-.same:	tst.b	dbl_on				; chrono : 0,13 s par tour d'origine, donc
-	beq.s	.nc				; 0,06 puis 0,07 par demi-tour
-	cmp.b	#$06,G_CHRONO(a6)
-	seq	d1
-	and.b	#1,d1
-	addq.b	#6,d1
-	move.b	d1,G_CHRONO(a6)
+.same:	moveq	#0,d0				; chrono : 0,13 s par tour de 6 VBL, donc
+	move.b	dbl_on,d0			; 13 x n / 6 centièmes par tour de n VBL
+	beq.s	.nc				; (reste gardé)
+	moveq	#0,d1
+	move.b	rel_val(pc,d0.w),d1
+	mulu.w	#13,d1
+	add.w	chr_rem,d1
+	divu.w	#6,d1
+	move.b	d1,G_CHRONO(a6)			; < 10 : même valeur en BCD
+	swap	d1
+	move.w	d1,chr_rem
 	bsr	flush_ic
 .nc:	movem.l	(sp)+,d0-d3/a0-a2/a6
 	jmp	([wait_addr])
 
-; d0.b = 1 : pose, 0 : retire (chaque site vérifié avant d'être modifié) ; a6 = base
+; niveau d0.b (0 : jeu d'origine, 1 : x2, 2 : x3) ; chaque site est vérifié (une des valeurs
+; connues) avant d'être modifié ; a6 = base
 dbl_patch:
+	ext.w	d0
 	lea	dbl_dt,a1
+	move.b	dt_val(pc,d0.w),d2
 .d:	move.l	(a1)+,d1
-	beq.s	.words
+	beq.s	.rel
 	lea	-$10100+3(a6,d1.l),a0
-	tst.b	d0
-	beq.s	.dr
-	cmp.b	#$ee,(a0)
+	move.b	(a0),d1
+	cmp.b	#$ee,d1
+	beq.s	.dw
+	cmp.b	#$77,d1
+	beq.s	.dw
+	cmp.b	#$4f,d1
 	bne.s	.d
-	move.b	#$77,(a0)
+.dw:	move.b	d2,(a0)
 	bra.s	.d
-.dr:	cmp.b	#$77,(a0)
-	bne.s	.d
-	move.b	#$ee,(a0)
-	bra.s	.d
-.words:	lea	dbl_words,a1
-.m:	move.l	(a1)+,d1
-	beq.s	.jsr
-	move.w	(a1)+,d2			; d'origine
-	move.w	(a1)+,d3			; logique doublée
-	lea	-$10100(a6,d1.l),a0
-	tst.b	d0
-	beq.s	.mr
-	cmp.w	(a0),d2
-	bne.s	.m
-	move.w	d3,(a0)
-	bra.s	.m
-.mr:	cmp.w	(a0),d3
-	bne.s	.m
-	move.w	d2,(a0)
-	bra.s	.m
-.jsr:	lea	dbl_jsr,a1			; « move.w ...,d0 » <-> « jsr routine » (vide)
-.k:	move.l	(a1)+,d1
-	beq.s	.flush
-	move.l	(a1)+,a2
-	move.l	(a1)+,d2
-	add.l	a6,d2
-	sub.l	#$10100,d2			; adresse de la force dans le jeu chargé
-	lea	-$10100(a6,d1.l),a0
-	tst.b	d0
-	beq.s	.kr
-	cmp.w	#$3039,(a0)
-	bne.s	.k
-	cmp.l	2(a0),d2
-	bne.s	.k
+.rel:	lea	G_RELOAD+3(a6),a0		; VBL par tour
+	move.b	(a0),d1
+	cmp.b	#6,d1
+	beq.s	.rw
+	cmp.b	#3,d1
+	beq.s	.rw
+	cmp.b	#2,d1
+	bne.s	.damp
+.rw:	move.b	rel_val(pc,d0.w),(a0)
+.damp:	lea	G_DAMP(a6),a0			; amortisseur
+	move.w	d0,d2
+	add.w	d2,d2
+	move.w	(a0),d1
+	cmp.w	#$0114,d1
+	beq.s	.mw
+	cmp.w	#$0228,d1
+	beq.s	.mw
+	cmp.w	#$033c,d1
+	bne.s	.yaw
+.mw:	move.w	damp_val(pc,d2.w),(a0)
+.yaw:	move.w	mul_val(pc,d2.w),yaw_mul
+	lea	G_YAW(a6),a0			; réalignement du cap
+	tst.w	d0
+	beq.s	.yo
+	cmp.l	#$c1c3e380,(a0)			; calcul d'origine -> jsr yaw_div ; nop
+	bne.s	.chr
+	cmp.l	#$4840ee48,4(a0)
+	bne.s	.chr
 	move.w	#$4eb9,(a0)
-	move.l	a2,2(a0)
-	bra.s	.k
-.kr:	cmp.w	#$4eb9,(a0)
-	bne.s	.k
-	cmp.l	2(a0),a2
-	bne.s	.k
-	move.w	#$3039,(a0)
-	move.l	d2,2(a0)
-	bra.s	.k
-.flush:	lea	G_CHRONO(a6),a0			; chrono : $13 <-> $06/$07 (voir tick_hook)
-	tst.b	d0
-	beq.s	.cr
-	cmp.b	#$13,(a0)
+	move.l	#yaw_div,2(a0)
+	move.w	#$4e71,6(a0)
+	bra.s	.chr
+.yo:	cmp.w	#$4eb9,(a0)
+	bne.s	.chr
+	cmp.l	#yaw_div,2(a0)
+	bne.s	.chr
+	move.l	#$c1c3e380,(a0)
+	move.l	#$4840ee48,4(a0)
+.chr:	lea	G_CHRONO(a6),a0			; chrono : $13 d'origine
+	tst.w	d0
 	bne.s	flush_ic
-	move.b	#$06,(a0)
-	bra.s	flush_ic
-.cr:	cmp.b	#$06,(a0)
-	beq.s	.c13
-	cmp.b	#$07,(a0)
-	bne.s	flush_ic
-.c13:	move.b	#$13,(a0)
+	move.b	#$13,(a0)
 flush_ic:
 	tst.w	is_030				; code modifié : vider le cache d'instructions
 	beq.s	.nf
@@ -1108,6 +1128,22 @@ flush_ic:
 	movec	d1,cacr
 	move.l	(sp)+,d1
 .nf:	rts
+dt_val:		dc.b	$ee,$77,$4f
+rel_val:	dc.b	6,3,2
+	even
+damp_val:	dc.w	$0114,$0228,$033c
+mul_val:	dc.w	$ffff,$8000,$5556
+
+; réalignement du cap ($4E6FC : muls.w d3,d0 ; asl.l #1,d0 ; swap d0 ; lsr.w #7,d0) : même
+; calcul, divisé par le facteur (yaw_mul / 65536 : 1/2 ou 1/3)
+yaw_div:
+	muls.w	d3,d0
+	asl.l	#1,d0
+	swap	d0
+	lsr.w	#7,d0
+	mulu.w	yaw_mul,d0
+	swap	d0
+	rts
 
 ; image extrapolée inachevée quand le tour finit : la VBL fait reprendre ici (au retour
 ; d'interruption) ; pile du rendu abandonnée, état du jeu rétabli comme après un rendu
@@ -1206,14 +1242,6 @@ turbo_patch:
 dbl_dt:		dc.l	$48a08,$4b124,$4efaa,$4efc6,$4efe2,$4f014,$4f02c,$4f044,$4f136,$4f14e
 		dc.l	$4f166,$4f180,$4f198,$4f1b0,$507fe,$509ea,$50ed4,$50eec,$50f06,$50f1e
 		dc.l	$50f38,$50f50,0
-dbl_words:	dc.l	$4b0c4
-		dc.w	$0006,$0003
-		dc.l	$4e702
-		dc.w	$ee48,$e048
-		dc.l	$4ee64
-		dc.w	$0114,$0228
-		dc.l	0
-dbl_jsr:		dc.l	0
 	text
 
 	section	grel,data
@@ -1618,6 +1646,9 @@ kj_prev:	ds.b	1
 f1_prev:	ds.b	1
 dbl_req:	ds.b	1
 dbl_on:		ds.b	1
+		even
+yaw_mul:	ds.w	1
+chr_rem:	ds.w	1
 		even
 have_prev:	ds.w	1
 last_call:	ds.l	1

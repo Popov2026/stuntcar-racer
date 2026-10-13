@@ -52,20 +52,24 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   versions réécrites pour le 68030 (tracé des bords de polygones, sprites du cockpit), au
   résultat identique octet pour octet : chaque image est une vraie image du jeu.
 
-  Touche F1 : JEU FLUIDE (logique doublée), F1 à nouveau : jeu normal. Le jeu fait alors
-  un tour toutes les 3 VBL au lieu de 6, avec un pas de temps moitié : 16,7 vraies images
-  par seconde, sans image inventée. Actif pendant la course proprement dite ; la grue, le
-  départ et la remise en piste gardent le rythme d'origine (8,33). Pour que la voiture se
-  comporte comme dans le jeu d'origine, SCRF030 modifie, le temps de ce mode : le facteur
-  de pas des 22 calculs qui en dépendent (physique, adversaire, compteurs), le nombre de VBL
-  par tour, le réalignement du cap, l'amortisseur et le chrono (qui comptaient par tour).
-  Le chrono garde la cadence du jeu d'origine, qui compte 0,13 s par tour de 0,12 s
-  (8 % de trop, dans les deux modes : 2 min affichées = 1 min 51 réelles). Mesuré contre le jeu d'origine (moteur fidèle du projet, même code
-  68000) : mêmes vitesses, virages et consommation du turbo, à 1 % près, jusqu'au premier
-  saut ; ensuite les trajectoires divergent comme deux parties réelles. Dégâts : mêmes
-  passages rejoués depuis un même état, 13 % de plus en moyenne. Sous Hatari (68030 exact) : une image toutes les
-  3 VBL en course ; si une scène est trop chargée, le tour déborde et le jeu ralentit un
-  instant, comme sur ST.
+  Touche F1 : JEU FLUIDE. Chaque appui passe au niveau suivant :
+    normal        un tour de jeu toutes les 6 VBL : 8,33 images/s (jeu d'origine)
+    fluide (x2)   toutes les 3 VBL, pas de temps moitié : 16,7 images/s
+    très fluide   toutes les 2 VBL, pas de temps divisé par 3 : 25 images/s, et
+    (x3)          3 VBL (16,7) pour le tour suivant dès qu'un tour ne tient pas en 2
+  puis de nouveau normal. Ce sont de vraies images du jeu, sans image inventée. Actif
+  pendant la course proprement dite ; la grue, le départ et la remise en piste gardent le
+  rythme d'origine. Pour que la voiture se comporte comme dans le jeu d'origine, SCRF030
+  modifie, le temps de ce mode : le facteur de pas des 22 calculs qui en dépendent
+  (physique, adversaire, compteurs), le nombre de VBL par tour, le réalignement du cap,
+  l'amortisseur et le chrono (qui comptaient par tour). Le chrono garde la cadence du jeu
+  d'origine, qui compte 0,13 s par tour de 0,12 s (8 % de trop, dans tous les modes :
+  2 min affichées = 1 min 51 réelles). Mesuré contre le jeu d'origine (moteur fidèle du
+  projet, même code 68000) : mêmes vitesses, virages et chrono, à 1 % près, jusqu'au
+  premier saut ; ensuite les trajectoires divergent comme deux parties réelles. Dégâts :
+  mêmes passages rejoués depuis un même état, 13 à 15 % de plus en moyenne. Sous Hatari
+  (68030 16 MHz exact), en très fluide : une image toutes les 2 VBL sur l'essentiel de la
+  course, quelques tours à 3 VBL quand la scène est chargée.
 
   Option F (expérimentale) : une ou deux images EXTRAPOLÉES de plus par tour (rendu du jeu
   rappelé avec caméra et adversaire prolongés), environ 20 images/s sous Hatari. Elles
@@ -76,7 +80,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
   en course (un vrai joystick marche toujours).
-    F1          jeu normal / jeu fluide (voir « Vitesse »)
+    F1          normal -> fluide -> très fluide -> normal (voir « Vitesse »)
     menus       haut/bas pour choisir, bouton (ou Espace) pour valider ; nom au clavier
     course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
     après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)
