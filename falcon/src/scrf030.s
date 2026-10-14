@@ -90,6 +90,7 @@ OPT_FLUID	equ	5
 OPT_NOCACHE	equ	6
 OPT_X3		equ	7
 OPT_X6		equ	8			; (octet fort d'options)
+HD_NPATCH	equ	4			; modifications du jeu en mode HD
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -180,9 +181,32 @@ start:	move.l	4(sp),a5			; basepage
 	bra	quit
 
 .colour:
+	ifeq	AUTO
+	bsr	hd_setup			; F2 / F3 : 68040/68060 avec FPU, en VGA
+	endc
 	bsr	set_video
 	tst.l	d0
 	bmi	.novideo
+	ifeq	AUTO
+	tst.w	hd_avail			; registres du VIDEL en ST basse
+	beq.s	.nohd
+	move.l	#st_vregs,vsave_ptr
+	pea	videl_save(pc)
+	move.w	#38,-(sp)
+	trap	#14
+	addq.l	#6,sp
+	move.w	#-1,-(sp)			; Physbase = notre écran (le chargeur JEK s'en sert),
+	move.w	#-1,-(sp)			; même si le TOS en a réservé un autre aux changements
+	move.l	screen,-(sp)			; de mode
+	move.l	screen,-(sp)
+	move.w	#5,-(sp)
+	trap	#14
+	lea	14(sp),sp
+	move.w	#37,-(sp)
+	trap	#14
+	addq.l	#2,sp
+.nohd:
+	endc
 
 	pea	measure_vbl(pc)			; fréquence réelle de la VBL
 	move.w	#38,-(sp)
@@ -370,8 +394,13 @@ read_cookies:
 	bra.s	.loop
 .notsnd:
 	cmp.l	#'_CPU',d0
-	bne.s	.loop
+	bne.s	.notcpu
 	move.l	d1,cpu_cookie
+	bra.s	.loop
+.notcpu:
+	cmp.l	#'_FPU',d0
+	bne.s	.loop
+	move.l	d1,fpu_cookie
 	bra.s	.loop
 .done:
 ; adressage 24 bits ? Le chargeur JEK de GAME.PUT écrit la palette en $0FFF8240, qui
@@ -669,7 +698,10 @@ hw_restore:
 	beq.s	.done
 	move.w	sr,-(sp)
 	or.w	#$0700,sr
-	clr.w	icache_on
+	tst.w	hd_on
+	beq.s	.nohd
+	bsr	hd_leave
+.nohd:	clr.w	icache_on
 	clr.w	interp_on
 	clr.w	game_ok
 	move.b	old_byte_ff,$ff.w
@@ -704,6 +736,11 @@ vbl_hook:
 .ready:	tst.w	game_ok
 	beq.s	.nokj
 	bsr	kbd_joy
+	ifeq	AUTO
+	tst.w	hd_on
+	beq.s	.nokj
+	bsr	hd_vbl
+	endc
 .nokj:	tst.w	icache_on
 	beq.s	.nofl
 	bsr	flush_ic
@@ -765,7 +802,36 @@ kbd_joy:
 	clr.b	dbl_req
 	bra.s	.k6
 .f1on:	move.b	dbl_max,dbl_req
-.k6:	move.b	kj_prev,d1
+.k6:
+	ifeq	AUTO
+	tst.w	hd_avail
+	beq.s	.k8
+	cmp.b	#$b3,$3c(a0)			; F2 : mode HD, F3 : mode texturé (bascules)
+	seq	d1
+	cmp.b	f2_prev,d1
+	beq.s	.k7
+	move.b	d1,f2_prev
+	tst.b	d1
+	beq.s	.k7
+	moveq	#1,d1
+	cmp.b	hd_req,d1
+	bne.s	.f2s
+	moveq	#0,d1
+.f2s:	move.b	d1,hd_req
+.k7:	cmp.b	#$b3,$3d(a0)
+	seq	d1
+	cmp.b	f3_prev,d1
+	beq.s	.k8
+	move.b	d1,f3_prev
+	tst.b	d1
+	beq.s	.k8
+	moveq	#2,d1
+	cmp.b	hd_req,d1
+	bne.s	.f3s
+	moveq	#0,d1
+.f3s:	move.b	d1,hd_req
+	endc
+.k8:	move.b	kj_prev,d1
 	move.b	d0,kj_prev
 	or.b	d0,d1
 	beq.s	.out
@@ -858,6 +924,24 @@ detect_game:
 	lea	cache_tab,a1
 	bsr	turbo_patch
 	move.b	#$f0,pix_col			; couleur en place : inconnue
+	tst.w	is_060
+	beq.s	.nocc
+	moveq	#0,d0				; 68040/68060 : couleur lue dans les opcodes
+	btst	#6,$53151-$10100(a0)		; (bset : bit 6 à 1), puis tracé de pixel
+	beq.s	.cb0				; sans code automodifiant
+	bset	#0,d0
+.cb0:	btst	#6,$53155-$10100(a0)
+	beq.s	.cb1
+	bset	#1,d0
+.cb1:	btst	#6,$53159-$10100(a0)
+	beq.s	.cb2
+	bset	#2,d0
+.cb2:	btst	#6,$5315d-$10100(a0)
+	beq.s	.cb3
+	bset	#3,d0
+.cb3:	move.b	d0,pix_col
+	lea	pix060_tab,a1
+	bsr	turbo_patch
 .nocc:	btst	#OPT_NOTURBO,options+1
 	bne.s	.noturbo
 	lea	turbo_tab,a1
@@ -1146,7 +1230,19 @@ tick_hook:
 	swap	d3
 	move.w	d3,chr_rem
 	bsr	flush_ic
-.nc:	movem.l	(sp)+,d0-d3/a0-a2/a6
+.nc:
+	ifeq	AUTO
+	tst.w	hd_avail
+	beq.s	.nhd
+	bsr	hd_tick
+	tst.w	hd_on
+	beq.s	.nhd
+	movem.l	(sp)+,d0-d3/a0-a2/a6
+	jsr	([wait_addr])			; attente et échange des écrans du jeu,
+	bra	hd_postwait			; puis fenêtre du nouvel écran de travail
+.nhd:
+	endc
+	movem.l	(sp)+,d0-d3/a0-a2/a6
 	jmp	([wait_addr])
 
 ; facteur de pas d2.b sur les 22 sites (chacun vérifié : la dernière valeur posée)
@@ -1631,6 +1727,413 @@ priv_violation:
 	rts
 
 ; ---------------------------------------------------------------------------
+; mode HD (F2) et mode texturé (F3), Falcon à 68040/68060 avec FPU, moniteur VGA.
+; La logique du jeu tourne sans changement ; son décor 3D est dessiné dans un écran brouillon
+; (fenêtre 3D $56C78 posée par $10824 sur hd_scratch, tracé de pixel $5313E : rts), la
+; fenêtre de son écran de travail est mise en couleur 1 (que le cockpit n'emploie jamais)
+; avant chaque tour, et l'écran affiché est le nôtre ($10824 n'écrit plus $FFFF8201/03) :
+; 640x480 en 16 couleurs, dont 400 lignes dessinées par le moteur HD (falcon/hd/hd.c, C
+; compilé pour 68060, relogé ici) à partir de l'état du jeu, cockpit du jeu incrusté.
+	ifeq	AUTO
+HDMODE		equ	VGA|8|BPS4		; 640x480, 16 couleurs (COL80)
+HD_SCRBYTES	equ	640*480/2
+HD_WSBYTES	equ	1100000			; >= sizeof(struct hdws)
+
+hd_setup:
+	clr.w	hd_avail
+	cmp.l	#40,cpu_cookie
+	blo	.no
+	tst.w	fpu_cookie			; type de FPU (mot fort) : 0 = aucune
+	beq	.no
+	cmp.w	#2,montype
+	bne	.no
+	move.w	#3,-(sp)			; TT-RAM de préférence
+	move.l	#HD_WSBYTES,-(sp)
+	move.w	#$44,-(sp)			; Mxalloc
+	trap	#1
+	addq.l	#8,sp
+	tst.l	d0
+	ble	.no
+	move.l	d0,hd_ws
+	move.w	#3,-(sp)			; brouillon du décor du jeu
+	move.l	#32768,-(sp)
+	move.w	#$44,-(sp)
+	trap	#1
+	addq.l	#8,sp
+	tst.l	d0
+	ble	.no
+	move.l	d0,hd_scratch
+	clr.w	-(sp)				; écrans : ST-RAM
+	move.l	#2*HD_SCRBYTES+256,-(sp)
+	move.w	#$44,-(sp)
+	trap	#1
+	addq.l	#8,sp
+	tst.l	d0
+	ble	.no
+	add.l	#255,d0
+	and.l	#$ffffff00,d0
+	move.l	d0,hd_scr
+	move.l	d0,a0
+	add.l	#HD_SCRBYTES,d0
+	move.l	d0,hd_scr+4
+	move.l	#2*HD_SCRBYTES/4-1,d1
+.clr:	clr.l	(a0)+
+	subq.l	#1,d1
+	bpl.s	.clr
+	lea	hd_blob,a0			; moteur lié en 0 : mots longs absolus relogés
+	lea	hd_rel,a1
+	move.l	a0,d1
+.rl:	move.l	(a1)+,d0
+	bmi.s	.rd
+	add.l	d1,(a0,d0.l)
+	bra.s	.rl
+.rd:
+; registres du VIDEL du mode HD, posés par le TOS : avant set_video, mode et écrans du bureau
+; rétablis ensuite (le chargeur JEK du jeu efface l'écran que rend Physbase et y recopie sa
+; dernière routine : Physbase doit être l'écran de set_video, posé en dernier)
+	move.w	#-1,-(sp)
+	move.w	#88,-(sp)			; Vsetmode(-1)
+	trap	#14
+	addq.l	#4,sp
+	move.w	d0,-(sp)			; mode du bureau
+	move.w	#3,-(sp)			; Logbase
+	trap	#14
+	addq.l	#2,sp
+	move.l	d0,-(sp)
+	move.w	#2,-(sp)			; Physbase
+	trap	#14
+	addq.l	#2,sp
+	move.l	d0,-(sp)
+	move.w	#HDMODE,-(sp)
+	move.w	#3,-(sp)
+	move.l	hd_scr,-(sp)
+	move.l	hd_scr,-(sp)
+	move.w	#5,-(sp)			; Setscreen
+	trap	#14
+	lea	14(sp),sp
+	move.w	#37,-(sp)			; Vsync
+	trap	#14
+	addq.l	#2,sp
+	move.l	#hd_vregs,vsave_ptr
+	pea	videl_save(pc)
+	move.w	#38,-(sp)
+	trap	#14
+	addq.l	#6,sp
+	move.l	(sp)+,d1			; écrans et mode du bureau
+	move.l	(sp)+,d0
+	move.w	(sp)+,d2
+	move.w	d2,-(sp)
+	move.w	#3,-(sp)
+	move.l	d1,-(sp)
+	move.l	d0,-(sp)
+	move.w	#5,-(sp)
+	trap	#14
+	lea	14(sp),sp
+	move.w	#1,hd_avail
+.no:	rts
+
+; registres du VIDEL -> (vsave_ptr)
+videl_save:
+	move.l	vsave_ptr,a0
+	move.l	$ffff8282.w,(a0)+
+	move.l	$ffff8286.w,(a0)+
+	move.l	$ffff828a.w,(a0)+
+	move.l	$ffff828e.w,(a0)+
+	move.l	$ffff82a2.w,(a0)+
+	move.l	$ffff82a6.w,(a0)+
+	move.l	$ffff82aa.w,(a0)+
+	move.w	$ffff820a.w,(a0)+
+	move.w	$ffff82c0.w,(a0)+
+	move.w	$ffff8266.w,(a0)+
+	move.b	$ffff8260.w,(a0)+
+	clr.b	(a0)+
+	move.w	$ffff82c2.w,(a0)+
+	move.w	$ffff8210.w,(a0)+
+	move.w	$ffff820e.w,(a0)+
+	rts
+; a0 = registres, d0.w = 0 : mode Falcon, sinon compatible ST (interruptions coupées)
+videl_load:
+	move.l	(a0)+,$ffff8282.w
+	move.l	(a0)+,$ffff8286.w
+	move.l	(a0)+,$ffff828a.w
+	move.l	(a0)+,$ffff828e.w
+	move.l	(a0)+,$ffff82a2.w
+	move.l	(a0)+,$ffff82a6.w
+	move.l	(a0)+,$ffff82aa.w
+	move.w	(a0)+,$ffff820a.w
+	move.w	(a0)+,$ffff82c0.w
+	clr.w	$ffff8266.w
+	tst.w	d0
+	bne.s	.st
+	move.w	(a0),$ffff8266.w
+	bra.s	.c
+.st:	move.b	2(a0),$ffff8260.w
+.c:	move.w	4(a0),$ffff82c2.w
+	move.w	6(a0),$ffff8210.w
+	move.w	8(a0),$ffff820e.w
+	rts
+
+; adresse d'écran d0 -> registres vidéo
+set_vbase:
+	move.l	d0,-(sp)
+	lsr.l	#8,d0
+	move.b	d0,$ffff8203.w
+	lsr.w	#8,d0
+	move.b	d0,$ffff8201.w
+	move.l	(sp)+,d0
+	move.b	d0,$ffff820d.w			; après $8201/03 (qui le remettent à 0)
+	rts
+
+; modifications du jeu en mode HD : décalage, longueur, premier mot attendu (0 : non
+; vérifié), nouveaux octets
+; (les remplissages du décor ne sont pas neutralisés : ils remettent à zéro les listes de
+; bords que le tracé des bords fait avancer ; sans eux, ces listes écrasaient le jeu)
+hd_patches:
+	dc.l	$5313e-$10100			; tracé de pixel (ou t_pixel)
+	dc.w	2,0
+	dc.b	$4e,$75,0,0,0,0
+	dc.l	$10824-$10100			; move.l $56C74,d3 -> move.l #hd_scratch,d3 : fenêtre 3D
+	dc.w	6,$2639				; ($56C78 = d3 + $A10) dans le brouillon
+hd_scr_imm:
+	dc.b	$26,$3c,0,0,0,0
+	dc.l	$1083e-$10100			; adresse d'écran : n'est plus écrite
+	dc.w	6,$13c0
+	dc.b	$4e,$71,$4e,$71,$4e,$71
+	dc.l	$10846-$10100
+	dc.w	6,$13c0
+	dc.b	$4e,$71,$4e,$71,$4e,$71
+
+; passage en mode HD (a6 = base du jeu) ; d0 = 0 si fait
+hd_enter:
+	movem.l	d1-d3/a0-a2,-(sp)
+	tst.w	hd_inited
+	bne.s	.i
+	move.l	hd_ws,-(sp)
+	move.l	a6,d0
+	sub.l	#$10100,d0
+	move.l	d0,-(sp)
+	bsr	hd_call0
+	addq.l	#8,sp
+	tst.l	d0
+	bne	.fail
+	move.w	#1,hd_inited
+.i:	move.l	hd_scratch,hd_scr_imm+2		; (TEXT : modifiable)
+	lea	hd_patches(pc),a1		; tout vérifier avant de rien modifier
+	moveq	#HD_NPATCH-1,d3
+.v:	move.l	(a1),d0
+	move.w	6(a1),d1
+	beq.s	.vn
+	cmp.w	(a6,d0.l),d1
+	bne	.fail
+.vn:	lea	14(a1),a1
+	dbf	d3,.v
+	move.w	sr,-(sp)
+	or.w	#$0700,sr
+	lea	hd_patches(pc),a1
+	lea	hd_save,a2
+	moveq	#HD_NPATCH-1,d3
+.p:	move.l	(a1)+,d0
+	lea	(a6,d0.l),a0
+	move.w	(a1)+,d1
+	addq.l	#2,a1
+	subq.w	#1,d1
+	moveq	#0,d2
+.pb:	move.b	(a0,d2.w),(a2,d2.w)
+	move.b	(a1,d2.w),(a0,d2.w)
+	addq.w	#1,d2
+	dbf	d1,.pb
+	addq.l	#6,a1
+	addq.l	#8,a2
+	dbf	d3,.p
+	bsr	flush_ic
+	lea	hd_vregs,a0
+	moveq	#0,d0
+	bsr	videl_load
+	bsr	hd_palette
+	clr.w	hd_cur
+	move.l	hd_scr,d0
+	bsr	set_vbase
+	move.w	#1,hd_on
+	clr.w	hd_idle
+	move.w	(sp)+,sr
+	moveq	#0,d0
+	bra.s	.out
+.fail:	clr.w	hd_avail			; version du jeu inattendue : plus de HD
+	clr.b	hd_req
+	moveq	#-1,d0
+.out:	movem.l	(sp)+,d1-d3/a0-a2
+	rts
+
+; retour au jeu d'origine (aussi depuis la VBL)
+hd_leave:
+	movem.l	d0-d3/a0-a2/a6,-(sp)
+	move.w	sr,-(sp)
+	or.w	#$0700,sr
+	move.l	game_base,a6
+	lea	hd_patches(pc),a1
+	lea	hd_save,a2
+	moveq	#HD_NPATCH-1,d3
+.p:	move.l	(a1)+,d0
+	lea	(a6,d0.l),a0
+	move.w	(a1)+,d1
+	addq.l	#8,a1
+	subq.w	#1,d1
+	moveq	#0,d2
+.pb:	move.b	(a2,d2.w),(a0,d2.w)
+	addq.w	#1,d2
+	dbf	d1,.pb
+	addq.l	#8,a2
+	dbf	d3,.p
+	bsr	flush_ic
+	lea	st_vregs,a0
+	moveq	#1,d0
+	bsr	videl_load
+	move.l	G_DRAW(a6),d0			; fenêtre 3D : de nouveau dans l'écran du jeu
+	add.l	#$a10,d0
+	move.l	d0,G_WIN(a6)
+	move.l	G_DISP(a6),d0
+	bsr	set_vbase
+	clr.w	hd_on
+	move.w	(sp)+,sr
+	movem.l	(sp)+,d0-d3/a0-a2/a6
+	rts
+
+; VBL en mode HD : palette du jeu (table de course $6EA3C, format STE) dans le VIDEL ;
+; plus de tour de jeu depuis une seconde (menus) : retour au jeu d'origine
+hd_vbl:
+	tst.w	hd_busy				; image HD en cours : le tour n'est pas fini
+	bne.s	hd_palette
+	addq.w	#1,hd_idle
+	cmp.w	#50,hd_idle
+	blo.s	hd_palette
+	bra	hd_leave
+hd_palette:
+	movem.l	d0-d2/a0-a1,-(sp)
+	move.l	game_base,a0
+	add.l	#$6ea3c-$10100,a0
+	lea	$ffff9800.w,a1
+	moveq	#16-1,d2
+.c:	move.w	(a0)+,d0
+	moveq	#0,d1
+	rol.w	#8,d0				; rouge
+	bsr.s	.n
+	lsl.l	#8,d1
+	rol.w	#4,d0				; vert
+	bsr.s	.n
+	lsl.l	#8,d1
+	lsl.l	#8,d1
+	rol.w	#4,d0				; bleu
+	bsr.s	.n
+	move.l	d1,(a1)+
+	dbf	d2,.c
+	movem.l	(sp)+,d0-d2/a0-a1
+	rts
+; quartet STE (bits 2-0 + bit 3 de poids faible) de d0 -> 6 bits forts de l'octet faible de d1
+.n:	move.w	d0,-(sp)
+	and.w	#15,d0
+	add.w	d0,d0
+	btst	#4,d0
+	beq.s	.n1
+	or.w	#1,d0
+.n1:	and.w	#15,d0
+	mulu.w	#17,d0
+	and.w	#$fc,d0
+	or.b	d0,d1
+	move.w	(sp)+,d0
+	rts
+
+; à chaque tour (tick_hook, a6 = base du jeu) : mode demandé, image HD
+hd_tick:
+	movem.l	d0-d1/a0-a1,-(sp)
+	clr.w	hd_idle
+	tst.w	hd_on
+	bne.s	.on
+	tst.b	hd_req
+	beq	.out
+	bsr	hd_enter
+	tst.l	d0
+	bne	.out
+.on:	tst.b	hd_req
+	bne.s	.draw
+	bsr	hd_leave
+	bra	.out
+.draw:	tst.b	G_COUNTER(a6)			; tour déjà débordé : image HD sautée (le jeu
+	bne.s	.go				; garde sa vitesse), au plus 3 de suite
+	addq.w	#1,hd_skip
+	cmp.w	#4,hd_skip
+	blo.s	.out
+.go:	clr.w	hd_skip
+	move.w	hd_cur,d0			; écran caché
+	eor.w	#1,d0
+	lea	hd_scr,a0
+	move.l	(a0,d0.w*4),a0
+	add.l	#40*320,a0			; 400 lignes centrées
+	moveq	#0,d1
+	move.b	hd_req,d1
+	move.l	d1,-(sp)			; 1 : HD, 2 : texturé
+	move.l	a0,-(sp)
+	move.l	G_DISP(a6),-(sp)		; image précédente du jeu, roues comprises (VBL)
+	move.w	#1,hd_busy
+	bsr	hd_call1
+	clr.w	hd_busy
+	lea	12(sp),sp
+	bsr	flush_ic			; cache de données écrit en ST-RAM (VIDEL)
+	move.w	hd_cur,d0
+	eor.w	#1,d0
+	move.w	d0,hd_cur
+	lea	hd_scr,a0
+	move.l	(a0,d0.w*4),d0
+	bsr	set_vbase
+.out:	movem.l	(sp)+,d0-d1/a0-a1
+	rts
+
+; après l'échange (mode HD) : fenêtre 3D de l'écran de travail en couleur 1 (plan 0), le
+; cockpit y sera dessiné par le jeu ; registres et drapeaux rendus par l'attente gardés
+hd_postwait:
+	move.w	ccr,-(sp)
+	movem.l	d0-d2/a0/a6,-(sp)
+	move.l	game_base,a6
+	move.l	G_DRAW(a6),a0
+	add.l	#$a10,a0
+	move.l	#$ffff0000,d1
+	moveq	#0,d2
+	moveq	#128-1,d0
+.l:	rept	16
+	move.l	d1,(a0)+
+	move.l	d2,(a0)+
+	endr
+	lea	160-128(a0),a0
+	dbf	d0,.l
+	movem.l	(sp)+,d0-d2/a0/a6
+	move.w	(sp)+,ccr
+	rts
+
+; appels du moteur (C) sur notre pile : arguments recopiés, d2-d7/a2-a6 gardés par lui
+hd_call0:
+	lea	hd_blob,a0
+	bra.s	hd_call
+hd_call1:
+	lea	hd_blob+4,a0
+hd_call:
+	move.l	sp,a1
+	move.l	sp,hd_sp
+	lea	hd_stack,sp
+	move.l	12(a1),-(sp)
+	move.l	8(a1),-(sp)
+	move.l	4(a1),-(sp)
+	jsr	(a0)
+	move.l	hd_sp,sp
+	rts
+
+	section	hdblob,data
+	even
+hd_blob:	incbin	"../hd/hd.bin"
+		even
+hd_rel:		include	"../hd/hdrel.s"
+	text
+	endc
+
+; ---------------------------------------------------------------------------
 	ifeq	AUTO
 ; GAME.PUT est chargé (Pexec 3), son chargeur JEK corrigé pour l'adressage 32 bits, puis
 ; lancé (Pexec 6 : mémoire rendue à la fin). Le chargeur écrit la palette en $0FFF8240,
@@ -1768,6 +2271,7 @@ addr32:		ds.w	1
 montype:	ds.w	1
 snd_cookie:	ds.l	1
 cpu_cookie:	ds.l	1
+fpu_cookie:	ds.l	1
 old_mode:	ds.w	1
 new_mode:	ds.w	1
 old_phys:	ds.l	1
@@ -1808,6 +2312,25 @@ dbl_on:		ds.b	1
 yaw_mul:	ds.w	1
 chr_rem:	ds.w	1
 dt_rem:		ds.w	1
+hd_avail:	ds.w	1
+hd_on:		ds.w	1
+hd_inited:	ds.w	1
+hd_idle:	ds.w	1
+hd_busy:	ds.w	1
+hd_skip:	ds.w	1
+hd_cur:		ds.w	1
+hd_ws:		ds.l	1
+hd_scratch:	ds.l	1
+hd_scr:		ds.l	2
+hd_sp:		ds.l	1
+vsave_ptr:	ds.l	1
+hd_vregs:	ds.w	32
+st_vregs:	ds.w	32
+hd_save:	ds.b	8*HD_NPATCH
+hd_req:		ds.b	1
+f2_prev:	ds.b	1
+f3_prev:	ds.b	1
+		even
 cnt_real:	ds.w	1
 lvl_set:	ds.l	1
 dbl_max:	ds.b	1
@@ -1879,8 +2402,14 @@ vectab:		ds.l	256			; nouvelle table (VBR), alignée sur 4
 relays:		ds.w	3*256
 		ds.l	512
 stack_top:	ds.l	1
-screen_mem:	ds.b	SCREEN_AREA+256
+	ifeq	AUTO
+		ds.l	4096			; pile du moteur HD (C)
+hd_stack:	ds.l	1
+	endc
+; sous l'écran, au moins 32000 octets sans rien d'utile au chargement : le second chargeur
+; du jeu y recopie sa routine de relogement (Physbase - $7D00, haut de la RAM sur un ST)
 ebuf_mem:	ds.b	4*SCREEN_BYTES+256		; 4 écrans (32000 = 125*256 : alignés)
+screen_mem:	ds.b	SCREEN_AREA+256
 	ifd	PAD				; essais : décale l'adresse de chargement du jeu
 		ds.b	PAD
 	endc

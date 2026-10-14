@@ -5,13 +5,16 @@ VFLAGS  = -Ftos -m68030 -devpac -nosym -quiet
 
 all: bin/SCRF030.PRG bin/F030AUTO.PRG test/build/GAME.PUT test/build/DEBUT.PRG
 
-bin/SCRF030.PRG: src/scrf030.s src/snaptab.s src/turbo.s
+bin/SCRF030.PRG: src/scrf030.s src/snaptab.s src/turbo.s hd/hd.bin hd/hdrel.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -o $@ $<
 
 bin/F030AUTO.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -DAUTO=1 -o $@ $<
+
+# moteur HD (F2/F3) : hd/hd.bin et hd/hdrel.s sont fournis ; pour les refaire (gcc m68k-elf) :
+#   make -C falcon/hd CROSS=m68k-elf-
 
 # doublure de GAME.PUT pour les tests sous Hatari (aucune donnée du jeu)
 test/build/GAME.PUT: test/standin.s

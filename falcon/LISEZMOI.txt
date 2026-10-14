@@ -96,10 +96,31 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   du jeu qui charge GAME.PUT (F030AUTO.PRG ne peut pas corriger son chargeur), ce qui
   suppose l'adressage 24 bits.
 
+  Falcon à 68060/68040 avec FPU, moniteur VGA : deux modes de plus.
+    F2   MODE HD : la scène 3D est redessinée en 640x400 (écran 640x480, 16 couleurs, la
+         palette du jeu), cockpit du jeu agrandi deux fois et incrusté, voiture adverse en
+         3D. F2 à nouveau : jeu d'origine.
+    F3   MODE TEXTURÉ : le mode HD avec des motifs sur la route, le sol et les flancs.
+         F3 à nouveau : jeu d'origine (F2 / F3 passent de l'un à l'autre).
+  La partie reste celle du jeu d'origine : sa logique tourne sans changement, seul son décor
+  3D n'est plus affiché. La scène est recalculée par un moteur écrit en C pour le 68060
+  (falcon/hd/hd.c) à partir de l'état du jeu : caméra, géométrie exacte du circuit (décodée
+  dans le programme du jeu), position de l'adversaire. Si une image HD est trop longue, le
+  tour suivant n'en calcule pas (le jeu garde sa vitesse, l'image HD est moins fluide).
+  Hors course (menus), retour automatique au mode du jeu. Sous Hatari, le 68060 émulé est
+  bien plus lent qu'une vraie CT60 : 2 images HD par seconde environ ; la vitesse sur une
+  vraie carte reste à mesurer.
+
+  Bordures de la piste sur 68060 : le jeu choisit la couleur du tracé de pixel en réécrivant
+  ses propres instructions ; le 68060 gardait l'ancienne version en cache (bordure d'une
+  seule couleur, qui clignotait). Sur 68040/68060, ce tracé est remplacé par une routine
+  qui lit la couleur sans code réécrit.
+
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
   en course (un vrai joystick marche toujours).
     F1          jeu normal / jeu fluide (voir « Vitesse »)
+    F2 / F3     mode HD / mode texturé (68060 ou 68040 avec FPU, VGA)
     menus       haut/bas pour choisir, bouton (ou Espace) pour valider ; nom au clavier
     course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
     après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)

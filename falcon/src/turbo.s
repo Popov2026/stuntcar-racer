@@ -686,6 +686,67 @@ t_color:					; d0.b : bit p = plan p (1 : bset)
 	dc.l	.adr+24
 	section	turbo,code
 
+; tracé de pixel ($5313E) sans code automodifiant, posé sur 68040/68060 seulement : la
+; couleur est lue dans pix_col (notée par t_color) au lieu des opcodes bset/bclr réécrits.
+; Sur 68060, malgré CPUSHL, l'ancienne couleur restait exécutée (bordures de la piste d'une
+; seule couleur, qui clignotait d'une image à l'autre). Mêmes écritures, même d0, même Z.
+	section	turbo,code
+t_pixel:
+	movem.l	d1,-(sp)
+	move.b	d4,d0
+	andi.w	#15,d0
+	eori.w	#15,d0
+	move.b	pix_col,d1
+	cmpi.w	#8,d0
+	bge.s	.hi
+	lsr.b	#1,d1				; octets impairs : plans 0 à 3
+	bcc.s	.l0
+	bset	d0,1(a0)
+	bra.s	.l1
+.l0:	bclr	d0,1(a0)
+.l1:	lsr.b	#1,d1
+	bcc.s	.l2
+	bset	d0,3(a0)
+	bra.s	.l3
+.l2:	bclr	d0,3(a0)
+.l3:	lsr.b	#1,d1
+	bcc.s	.l4
+	bset	d0,5(a0)
+	bra.s	.l5
+.l4:	bclr	d0,5(a0)
+.l5:	lsr.b	#1,d1
+	bcc.s	.l6
+	bset	d0,7(a0)
+	movem.l	(sp)+,d1
+	rts
+.l6:	bclr	d0,7(a0)
+	movem.l	(sp)+,d1
+	rts
+.hi:	andi.w	#7,d0				; octets pairs
+	lsr.b	#1,d1
+	bcc.s	.h0
+	bset	d0,(a0)
+	bra.s	.h1
+.h0:	bclr	d0,(a0)
+.h1:	lsr.b	#1,d1
+	bcc.s	.h2
+	bset	d0,2(a0)
+	bra.s	.h3
+.h2:	bclr	d0,2(a0)
+.h3:	lsr.b	#1,d1
+	bcc.s	.h4
+	bset	d0,4(a0)
+	bra.s	.h5
+.h4:	bclr	d0,4(a0)
+.h5:	lsr.b	#1,d1
+	bcc.s	.h6
+	bset	d0,6(a0)
+	movem.l	(sp)+,d1
+	rts
+.h6:	bclr	d0,6(a0)
+	movem.l	(sp)+,d1
+	rts
+
 ; routines remplacées : décalage depuis $10100, premier mot attendu, remplaçante
 	section	turbo,code
 	even
@@ -719,4 +780,10 @@ cache_tab:
 	dc.l	$53094-$10100
 	dc.w	$e208				; lsr.b #1,d0
 	dc.l	t_color
+	dc.l	-1
+; posée sur 68040/68060 (avec cache_tab)
+pix060_tab:
+	dc.l	$5313e-$10100
+	dc.w	$1004				; move.b d4,d0
+	dc.l	t_pixel
 	dc.l	-1

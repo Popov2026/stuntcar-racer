@@ -119,6 +119,52 @@ EmuTOS) : le jeu se charge et tourne en adressage 32 bits avec TT-RAM. Hatari ne
 du 68060 ne sont pas émulés par Hatari : leur gestion n'a pas pu être essayée sur une
 vraie CT60.
 
+### Mode HD (F2) et mode texturé (F3) : Falcon à 68060/68040 avec FPU, VGA
+
+`falcon/hd/hd.c` (C sans bibliothèque, `m68k-elf-gcc -m68060`, lié en 0 par `hd.ld`, binaire
+`hd.bin` et table de relogement `hdrel.s` produits par `mkblob.py`, inclus dans `SCRF030.PRG`
+et relogés au lancement) redessine la scène à partir de l'état du jeu, port du mode HD de
+`native/` : géométrie des 8 circuits décodée dans le programme du jeu (port de `$48390`),
+caméra `$10AC2` (œil, focale 259 × 2, centre 153,2 / 82,3, rapport 0,895), adversaire
+(`$10907`, `$108F6`, `$109D6`, boîtes orientées selon la route), sol, collines, route en
+triangles, lignes de bord, flancs. Peintre (cases de profondeur de 64 unités, dessinées dans
+l'ordre d'ajout), découpage au plan proche puis en 2D, remplissage par lignes dans un tampon
+d'octets de la fenêtre 3D seule (512 × 256), textures 16 × 16 à deux couleurs en
+perspective (une division par groupe de 16 pixels). Sortie : écran 640 × 480 en 16 couleurs
+(4 plans, palette du VIDEL `$FF9800` remplie à chaque VBL depuis la palette de course du jeu
+`$6EA3C`), 400 lignes utiles ; la fenêtre est convertie en plans par table, le cockpit hors
+fenêtre recopié du jeu en plans directement (bits et lignes doublés).
+
+Côté jeu, en mode HD :
+
+| Modification | Pourquoi |
+|---|---|
+| `$10824` : `move.l $56C74,d3` → `move.l #brouillon,d3` | la fenêtre 3D `$56C78` (= d3 + `$A10`) pointe dans un écran brouillon : le décor du jeu y est dessiné, invisible. Neutraliser les remplissages ne marche pas : ils remettent à zéro les listes de bords que le tracé des bords (`$5353C`) fait avancer, qui écrasaient alors le jeu |
+| `$5313E` : `rts` | le tracé de pixel (lignes du décor) écrit dans `$56C74`, l'écran de travail : supprimé (sans effet de bord ; moteur fidèle : même partie) |
+| après chaque échange, fenêtre de l'écran de travail en couleur 1 | la couleur 1 (route) n'est jamais employée par le cockpit (moteur fidèle : histogramme des couleurs de la fenêtre, décor supprimé) : elle marque la scène, le reste est incrusté |
+| `$1083E`, `$10846` : `nop` | le jeu n'écrit plus l'adresse d'écran ; on affiche nos deux écrans HD |
+
+L'image HD est calculée dans le tour (à la place de l'attente), à partir de l'écran affiché du
+jeu (`$56C70`, image précédente, roues dessinées par la VBL comprises). Tour déjà débordé :
+image sautée (au plus 3 de suite). Plus de tour pendant une seconde (menus) : retour au mode
+du jeu. Registres du VIDEL des deux modes relevés au lancement (`Setscreen` du TOS).
+
+Au passage : le second chargeur du jeu recopie sa routine de relogement en
+`Physbase - $7D00` (sur un ST, sous l'écran en haut de la RAM) ; le lanceur place donc
+32 Ko inutilisés au chargement (les écrans de l'option F) juste sous son écran.
+
+**Bordures sur 68060** : le choix de couleur `$53094` réécrit les `bset`/`bclr` du tracé de
+pixel `$5313E` (le seul code que le jeu modifie en course : moteur fidèle, écritures dans du
+code déjà exécuté, 8 circuits). Sur 68030, le cache d'instructions de 256 octets est vidé
+ligne par ligne (`t_color`) ; sur 68060, `CPUSHL` ne suffisait pas : bordure d'une seule
+couleur, qui clignotait. Sur 68040/68060, `$5313E` est remplacé par `t_pixel`, qui lit la
+couleur notée par `t_color` (mêmes écritures, même d0, même Z).
+
+Sous Hatari (68060 à 128 MHz modifié, VGA) : F2 et F3 s'affichent, F2 revient au jeu. Le 68060
+de Hatari est très lent : environ 30 VBL par image HD, 50 en texturé. Profil : découpage et
+projection 48 %, remplissage 26 % (70 % en texturé). La vitesse sur une vraie CT60 n'a pas pu
+être mesurée.
+
 ### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
 
 **Par défaut depuis le 13/10 : désactivées.** Le lanceur rallume les caches et pose les routines
