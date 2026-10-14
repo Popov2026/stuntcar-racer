@@ -13,7 +13,7 @@ const F = +(process.argv[4] || 2);
 const bytes = new Uint8Array(fs.readFileSync(disk));
 const SITES = [0x48a08, 0x4b124, 0x4efaa, 0x4efc6, 0x4efe2, 0x4f014, 0x4f02c, 0x4f044, 0x4f136, 0x4f14e, 0x4f166,
   0x4f180, 0x4f198, 0x4f1b0, 0x507fe, 0x509ea, 0x50ed4, 0x50eec, 0x50f06, 0x50f1e, 0x50f38, 0x50f50];
-const DT = { 1: 0xee, 2: 0x77, 3: 0x4f }, REL = { 1: 6, 2: 3, 3: 2 }, DAMP = { 1: 0x114, 2: 0x228, 3: 0x33c }, MUL = { 2: 0x8000, 3: 0x5556 };
+const DT = { 1: 0xee, 2: 0x77, 3: 0x4f, 6: 0x28 }, REL = { 1: 6, 2: 3, 3: 2, 6: 1 }, DAMP = { 1: 0x114, 2: 0x228, 3: 0x33c, 6: 0x678 }, MUL = { 2: 0x8000, 3: 0x5556, 6: 0x2aab };
 // yaw_div posé en $E0100 : muls.w d3,d0 ; add.l d0,d0 ; swap d0 ; lsr.w #7,d0 ; mulu.w mul(pc),d0 ; swap d0 ; rts
 const YAW = [0xc1, 0xc3, 0xd0, 0x80, 0x48, 0x40, 0xee, 0x48, 0xc0, 0xfa, 0x00, 0x06, 0x48, 0x40, 0x4e, 0x75, 0x55, 0x56];
 const YAWO = [0xc1, 0xc3, 0xe3, 0x80, 0x48, 0x40, 0xee, 0x48], YAWN = [0x4e, 0xb9, 0, 0x0e, 0x01, 0x00, 0x4e, 0x71];
@@ -29,7 +29,9 @@ function engine(trk) { const e = new SCR.Engine(bytes); e.renderOriginal = true;
 function step(e, fast, inp) {
   const L = fast && e.b(0x109c9) === 0 ? F : 1; setLevel(e, L);
   for (let k = 0; k < L; k++) {
-    if (L > 1) { const a = 13 * REL[L] + e.chrRem; e.cpu.mem[0x4b517] = Math.floor(a / 6); e.chrRem = a % 6; }
+    if (L > 1) { const a = 13 * REL[L] + e.chrRem; e.cpu.mem[0x4b517] = Math.floor(a / 6); e.chrRem = a % 6;
+      // pas de temps : $EE x n / 6 par tour de n VBL, reste gardé (x3 : 79,33 ; x6 : 39,67)
+      const b = 0xee * REL[L] + (e.dtRem || 0), dt = Math.floor(b / 6); e.dtRem = b % 6; for (const s of SITES) e.cpu.mem[s + 3] = dt; }
     e.setInput(inp); e.tick(REL[L]);
   }
 }

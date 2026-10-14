@@ -80,6 +80,20 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   (l'image tressaute), et le jeu dessine certaines choses (roues avant, tableau de bord)
   dans l'écran affiché, qui manquent alors sur ces images. Préférez F1.
 
+  Falcon à 68060 (CT60, CT63) ou 68040, en VGA ou RVB : le même SCRF030.PRG reconnaît le
+  processeur. Il gère l'adressage 32 bits et la TT-RAM (le jeu et l'écran restent en
+  ST-RAM), et les caches du 68040/68060 (vidés avec CPUSHA/CPUSHL quand du code est
+  modifié). Le jeu démarre en logique x6 : un tour par VBL, 50 vraies images/s, et un
+  niveau de moins (x3, puis x2) dès qu'un tour déborde. On remonte quand 8 tours de suite
+  tiennent. F1 rend le jeu normal. En VGA 60 Hz, le jeu voit 50 VBL par seconde : une image
+  sur six reste affichée deux VBL. Sous Hatari, à une horloge de 128 MHz, 97 % des images
+  de course sont à une VBL. La gestion des caches du 68060 n'a pas pu être essayée sur une
+  vraie carte (Hatari ne les émule pas) : en cas de souci, essayer l'option K (caches
+  coupés, plus lent).
+  Sur CT60, lancer SCRF030.PRG depuis le disque dur : depuis la disquette, c'est le menu
+  du jeu qui charge GAME.PUT (F030AUTO.PRG ne peut pas corriger son chargeur), ce qui
+  suppose l'adressage 24 bits.
+
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
   en course (un vrai joystick marche toujours).
@@ -111,6 +125,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                K     caches du 68030 coupés
                F     images extrapolées (expérimental, voir plus haut)
                3     F1 passe en très fluide (25 images/s) : Falcon accéléré
+               6     F1 passe en logique x6 (50 images/s, adaptatif) : d'office sur
+                     68040/68060 (CT60, CT63)
 
 
 4. Tester sous Hatari (Linux, macOS)
@@ -138,10 +154,15 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   depuis le disque dur et depuis la disquette Falcon.
 
   Adressage : le chargeur JEK de GAME.PUT écrit la palette en $0FFF8240, qui n'est
-  $FF8240 qu'en adressage 24 bits (Falcon d'origine, Hatari par défaut). En 32 bits
-  (Hatari avec TT-RAM ou « 24-bit addressing » décoché, cartes accélératrices), SCRF030
-  le détecte et l'explique au lieu de lancer le jeu : cocher 24-bit addressing
-  (--addr24 on) et retirer la TT-RAM.
+  $FF8240 qu'en adressage 24 bits (Falcon d'origine, Hatari par défaut). SCRF030 charge
+  GAME.PUT sans le lancer, corrige ces trois adresses en $FFFF8240 (valable en 24 et en
+  32 bits), puis le lance : TT-RAM et adressage 32 bits sont permis.
+
+  68060 sous Hatari (EmuTOS) :
+    hatari --machine falcon --cpulevel 6 --fpu internal --addr24 off --ttram 64 \
+           --monitor vga SCR/SCRF030.TOS
+  Hatari ne dépasse pas 32 MHz : le jeu y tourne entre 2 et 3 VBL par tour (adaptatif),
+  pas à la vitesse d'une CT60.
 
   Remarque : en ST basse sur VGA, Hatari calcule mal la fréquence du VIDEL et tourne à
   50 Hz au lieu de 60 ; SCRF030 mesure la fréquence, il ne corrige donc rien dans ce cas.

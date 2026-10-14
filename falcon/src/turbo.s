@@ -632,6 +632,8 @@ t_color:					; d0.b : bit p = plan p (1 : bset)
 .k:	move.l	cei_value,d2
 	lea	.adr(pc),a1
 	moveq	#4-1,d1
+	tst.w	is_060
+	bne.s	.p6
 .p:	lsr.w	#1,d0
 	bcc.s	.n
 	move.l	(a1),a0				; les deux mots longs du plan
@@ -642,6 +644,16 @@ t_color:					; d0.b : bit p = plan p (1 : bset)
 	movec	d2,cacr
 .n:	addq.l	#8,a1
 	dbf	d1,.p
+	bra.s	.e
+.p6:	lsr.w	#1,d0				; 68040/68060 : ligne écrite en mémoire (cache à
+	bcc.s	.n6				; recopie) et retirée des deux caches
+	move.l	(a1),a0
+	CPUSHL_BC_A0
+	move.l	4(a1),a0
+	CPUSHL_BC_A0
+.n6:	addq.l	#8,a1
+	dbf	d1,.p6
+.e:
 	movem.l	(sp)+,d0-d2/a0-a1
 	move.w	(sp)+,ccr
 	rts

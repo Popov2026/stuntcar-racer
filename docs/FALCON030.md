@@ -15,13 +15,13 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 | Logique, chrono et son moteur cadencés par la VBL (8,33 ticks/s à 50 Hz) : 20 % trop rapides à 60 Hz | table des vecteurs déplacée (`VBR`) vers des relais `move.l (n*4).w,-(sp) ; rts` ; à 60 Hz, le relais de la VBL ne transmet que 5 VBL sur 6. La fréquence est **mesurée** (horloge 200 Hz) |
 | `move sr,<ea>` privilégiée sur 68010+ | violation de privilège : `move sr,Dn` et `move sr,-(a7)` émulés en mode utilisateur, sinon renvoi au vecteur du TOS |
 | La physique lit l'octet `$FF` (`move.b $FF.l,d0` en `$49718`, au lieu de `#$FF`) : octet faible du vecteur 63, différent sur chaque TOS (EmuTOS : `$02`) | le CPU lisant la table déplacée, l'octet `$FF` reçoit la valeur voulue `$FF` (rétabli au retour) |
-| Le chargeur JEK écrit la palette en `$0FFF8240` : ce n'est `$FF8240` qu'en adressage 24 bits (8 bits forts ignorés, Falcon d'origine) ; en 32 bits (Hatari avec TT-RAM, cartes accélératrices), erreur de bus | lecture d'essai en `$0FFF8240` au lancement : en cas d'erreur de bus, message (« cocher 24-bit addressing ») au lieu de lancer le jeu |
+| Le chargeur JEK écrit la palette en `$0FFF8240` : ce n'est `$FF8240` qu'en adressage 24 bits (8 bits forts ignorés, Falcon d'origine) ; en 32 bits (Hatari avec TT-RAM, cartes accélératrices), erreur de bus | `GAME.PUT` chargé sans être lancé (`Pexec` 3), les trois adresses corrigées en `$FFFF8240` (texte `+$80`, `+$172`, `+$216`, chacune vérifiée avec l'opcode qui la précède), caches vidés, puis lancé (`Pexec` 6). Le jeu lui-même n'écrit qu'en `$00FFxxxx`, que les Falcon à 68060 (CT60, CT63) décodent aussi |
 | Son YM2149 | PSG dirigé vers l'ADC puis l'additionneur du codec (`Soundcmd`) |
 | Disquette d'origine : BPB à 0 secteur par cluster | `scr_tool.py falcon` reconstruit une disquette FAT12 standard, `F030AUTO.PRG` (même lanceur, résident, pour le dossier `AUTO`) avant le menu `DEBUT.PRG` |
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
 `N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine : ni caches, ni routines
-réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental), `3` (F1 en logique ×3) — touches au
+réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental), `3` (F1 en logique ×3), `6` (F1 en logique ×6, d'office sur 68040/68060) — touches au
 lancement, ligne de commande ou première ligne de `SCRF030.INF`.
 
 Commandes : le jeu se pilote au **joystick** (port 1), menus compris (sa routine de lecture
@@ -30,7 +30,7 @@ des touches, `$46DAC`, traduit le joystick en codes de flèches). SCRF030 ajoute
 Espace, écrits dans le joystick du jeu (`$106A6`, format de son `$118`) tant qu'une de ces
 touches est enfoncée. Sous Hatari, sans émulation du joystick comme avec `--joystick 1`.
 
-### Logique accélérée (touche F1) : 8,33 → 16,7 ou 25 vraies images/s
+### Logique accélérée (touche F1) : 8,33 → 16,7, 25 ou 50 vraies images/s
 
 F1 bascule entre normal et fluide (×2 : un tour toutes les 3 VBL, cadence stable sur un
 Falcon030 à 16 MHz) ; avec l'option `3`, entre normal et très fluide (×3 : toutes les 2 VBL,
@@ -40,16 +40,16 @@ pour les Falcon accélérés). À la place de `jsr $4B0A6` (attente de fin de to
 (compte à rebours `$109C9` nul ; la grue, le départ et la remise en piste comptent en tours
 et gardent le rythme d'origine). En très fluide, on reste à 2 VBL tant que le tour y tient
 (compteur de VBL non nul à l'entrée), on passe à 3 VBL pour le tour suivant sinon, et on
-revient à 2 dès qu'un tour à 3 VBL a pris moins de 2 VBL. `dbl_patch` pose le niveau, chaque
+revient à 2 après 8 tours de suite à 3 VBL qui ont pris moins de 2 VBL. `dbl_patch` pose le niveau, chaque
 site vérifié (une des valeurs connues), puis vide le cache d'instructions :
 
-| Site | ×1 | ×2 | ×3 | Pourquoi |
-|---|---|---|---|---|
-| 22 × `move.b #$EE,Dn` (`$48A08`, `$4B124`, `$4EFAA`…`$4F1B0`, `$507FE`, `$509EA`, `$50ED4`…`$50F50`) | `$EE` | `$77` | `$4F` | facteur de pas : intégrations de la physique, avance de l'adversaire, accumulateur `$109B9` qui cadence les compteurs en temps de jeu (`$109B7` : dégâts, compte à rebours, carburant du turbo) |
-| `$4B0C2` `move.b #6,$4EC20` | 6 | 3 | 2 | VBL par tour |
-| `$4E6FC`-`$4E703` (`muls`, `asl`, `swap`, `lsr.w #7`) | d'origine | `jsr yaw_div` | `jsr yaw_div` | réalignement du cap vers la piste, ajouté au lacet à chaque tour sans pas de temps : même calcul, × 1/2 ou × 1/3 (`mulu.w #$8000` / `#$5556`, `swap`) |
-| `$4EE64` | `$114` | `$228` | `$33C` | amortisseur : proportionnel à la variation de compression d'un tour à l'autre (`$10B04`) |
-| `$4B514` `move.b #$13,d0` | `$13` | 13 × n / 6 | 13 × n / 6 | chrono (`$11002` minutes, `$1101A` secondes, `$11032` centièmes, BCD) : 0,13 s par tour de 6 VBL, donc 13 × n / 6 centièmes par tour de n VBL, reste gardé (le jeu d'origine compte 8 % de trop : un tour dure 0,12 s) |
+| Site | ×1 | ×2 | ×3 | ×6 | Pourquoi |
+|---|---|---|---|---|---|
+| 22 × `move.b #$EE,Dn` (`$48A08`, `$4B124`, `$4EFAA`…`$4F1B0`, `$507FE`, `$509EA`, `$50ED4`…`$50F50`) | `$EE` | `$77` | `$4F`/`$50` | `$27`/`$28` | `$EE` × n / 6 par tour de n VBL, reste gardé ;  facteur de pas : intégrations de la physique, avance de l'adversaire, accumulateur `$109B9` qui cadence les compteurs en temps de jeu (`$109B7` : dégâts, compte à rebours, carburant du turbo) |
+| `$4B0C2` `move.b #6,$4EC20` | 6 | 3 | 2 | 1 | VBL par tour |
+| `$4E6FC`-`$4E703` (`muls`, `asl`, `swap`, `lsr.w #7`) | d'origine | `jsr yaw_div` | `jsr yaw_div` | `jsr yaw_div` | réalignement du cap vers la piste, ajouté au lacet à chaque tour sans pas de temps : même calcul, × 1/2, 1/3 ou 1/6 (`mulu.w #$8000` / `#$5556` / `#$2AAB`, `swap`) |
+| `$4EE64` | `$114` | `$228` | `$33C` | `$678` | amortisseur : proportionnel à la variation de compression d'un tour à l'autre (`$10B04`) |
+| `$4B514` `move.b #$13,d0` | `$13` | 13 × n / 6 | 13 × n / 6 | 13 × n / 6 | chrono (`$11002` minutes, `$1101A` secondes, `$11032` centièmes, BCD) : 0,13 s par tour de 6 VBL, donc 13 × n / 6 centièmes par tour de n VBL, reste gardé (le jeu d'origine compte 8 % de trop : un tour dure 0,12 s) |
 
 Validation dans le moteur fidèle (`replica/js/engine.js`, le code 68000 du jeu exécuté en
 JavaScript), `falcon/test/double_test.js` : course normale contre course accélérée, mêmes
@@ -72,6 +72,41 @@ tranches de 10 s : 166, 249, 76, 189, 143 et 77 images à 2 VBL contre 38, 1, 32
 moins de 2 VBL (profil : 1,85 VBL en moyenne grue comprise ; à la fin du calcul, 2 VBL
 restantes sur 3 dans 81 % des tours) ; le profil est plat (routines réécrites 28 % du
 travail, une trentaine de routines du jeu entre 1 et 6 %).
+
+### Falcon à 68060 (CT60, CT63) et 68040 : VGA, adressage 32 bits, logique ×6
+
+Le même `SCRF030.PRG` reconnaît le processeur (cookie `_CPU` = 40 ou 60) :
+
+* **adressage 32 bits** : `GAME.PUT` est chargé par `Pexec` 3, les trois écritures du
+  chargeur JEK en `$0FFF8240` corrigées en `$FFFF8240` (voir le tableau du haut), puis lancé
+  par `Pexec` 6. TT-RAM permise : `GAME.PUT` (drapeaux 0) et l'écran du lanceur restent en
+  ST-RAM, seule visible du VIDEL ;
+* **caches** à recopie (copyback) des 68040/68060 : l'ancien bit CI du CACR n'existe plus.
+  Au chargement : `CPUSHA BC` (cache de données écrit en mémoire), `CACR = 0`, `CINVA BC`.
+  Le jeu en place : `CACR` du TOS (ou `$A0808000` sur 68060 : données, tampon d'écriture,
+  branchements, instructions, s'il les avait coupés). Code modifié (relais, routines posées,
+  niveau de logique, chrono, à chaque VBL) : `CPUSHA BC` puis `CABC` (cache de branchements,
+  68060). Couleur du tracé de pixel (`t_color`) : `CPUSHL BC` sur les deux lignes concernées
+  au lieu de `CAAR` + `CEI`. Les instructions sont posées en `dc.w` (assemblage en 68030) ;
+* **`$FFFF8007`** (horloge et bus du Falcon) laissé tel quel ;
+* **logique ×6** : un tour par VBL, **50 vraies images/s**, fluide dès le départ (F1 : retour
+  au jeu normal). Pas de temps `$EE` / 6 (`$27`/`$28` avec le reste), 1 VBL par tour,
+  amortisseur `$678`, cap × 1/6. Adaptatif : un tour qui déborde (compteur nul à l'entrée)
+  fait descendre d'un niveau (×6 → ×3 → ×2) ; après 8 tours de suite qui tiennent dans le
+  niveau au-dessus (compteur ≥ 2), on remonte. L'option `6` l'active sur 68030 (inutile à
+  16 MHz), l'option `3` limite à ×3. Moteur fidèle (`double_test.js traj 6`) : vitesses à
+  2 % près jusqu'au premier saut.
+
+En VGA (60 Hz), la correction 60 Hz reste active : le jeu voit 50 VBL/s, une image sur six
+est donc tenue deux VBL (50 images/s sur un écran à 60 Hz).
+
+Sous Hatari (`--machine falcon --cpulevel 6 --addr24 off --ttram 64 --fpu internal`,
+EmuTOS) : le jeu se charge et tourne en adressage 32 bits avec TT-RAM. Hatari ne dépasse pas
+32 MHz et n'émule pas la vitesse d'un 68060 ; avec une horloge portée à 64 et 128 MHz
+(Hatari modifié pour les essais), en course : à 64 MHz, 505 images à 1 VBL, 235 à 2, 24 à 3 ;
+à 128 MHz, 945 à 1 VBL, 24 à 2 et 7 à 3 ; à 32 MHz, entre 2 et 3 VBL (×3 / ×2). Les caches
+du 68060 ne sont pas émulés par Hatari : leur gestion n'a pas pu être essayée sur une
+vraie CT60.
 
 ### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
 

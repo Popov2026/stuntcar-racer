@@ -20,7 +20,10 @@
 ;      - l'octet $FF (vecteur 63, propre à chaque TOS) que lit la physique
 ;        du jeu reçoit la valeur voulue, $FF ;
 ;  * son : sortie YM2149 (PSG) dirigée vers le codec ;
-;  * en option, mode « 8 MHz + bus STE » proche d'un ST.
+;  * en option, mode « 8 MHz + bus STE » proche d'un ST ;
+;  * cartes 68060 (CT60, CT63) et 68040 : adressage 32 bits (le chargeur JEK de GAME.PUT
+;    est corrigé avant d'être lancé : $0FFF8240 -> $FFFF8240), caches à recopie
+;    (CPUSHA / CPUSHL au lieu du bit CI), et jeu fluide d'office en logique x6.
 ;
 ; Quand le jeu installe sa VBL, le relais le reconnaît (signature) et
 ;  * fait des flèches et d'Espace un joystick (kbd_joy) ;
@@ -52,6 +55,7 @@
 ;   T              sans les routines réécrites pour le 68030 (turbo.s)
 ;   F              images extrapolées (expérimental : défauts possibles)
 ;   3              F1 passe en logique x3 (25 images/s) au lieu de x2 : Falcon accéléré
+;   6              F1 passe en logique x6 (50 images/s), adaptatif : d'office sur 68040/68060
 ;   K              caches du 68030 coupés (images extrapolées et turbo.s gardées)
 ;
 ; Assemblage : vasmm68k_mot -Ftos -m68030 -devpac -nosym -o SCRF030.PRG scrf030.s
@@ -65,6 +69,17 @@
 AUTO	equ	0
 	endc
 
+; instructions de cache des 68040/68060 (assemblage en -m68030)
+CPUSHA_BC	macro
+	dc.w	$f4f8				; cpusha bc : écrit le cache de données, vide les deux
+	endm
+CINVA_BC	macro
+	dc.w	$f4d8				; cinva bc : vide les deux caches
+	endm
+CPUSHL_BC_A0	macro
+	dc.w	$f4e8				; cpushl bc,(a0) : une ligne
+	endm
+
 ; options
 OPT_8MHZ	equ	0
 OPT_CACHE	equ	1
@@ -74,6 +89,7 @@ OPT_NOTURBO	equ	4
 OPT_FLUID	equ	5
 OPT_NOCACHE	equ	6
 OPT_X3		equ	7
+OPT_X6		equ	8			; (octet fort d'options)
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -153,13 +169,7 @@ start:	move.l	4(sp),a5			; basepage
 	bra	quit
 
 .falcon:
-	tst.w	addr32
-	beq.s	.a24
-	lea	txt_addr32(pc),a0		; le chargeur du jeu planterait
-	bsr	print
-	bsr	wait_key
-	bra	quit
-.a24:	move.w	#89,-(sp)			; Vmontype
+	move.w	#89,-(sp)			; Vmontype
 	trap	#14
 	addq.l	#2,sp
 	move.w	d0,montype
@@ -277,8 +287,11 @@ parse_options:
 	bne.s	.not8
 	bset	#OPT_8MHZ,d4
 .not8:	cmp.b	#'3',d0
-	bne.s	.notspeed
+	bne.s	.not3
 	bset	#OPT_X3,d4
+.not3:	cmp.b	#'6',d0
+	bne.s	.notspeed
+	bset	#OPT_X6,d4
 .notspeed:
 	and.b	#$df,d0				; majuscule
 	cmp.b	#'C',d0
@@ -562,8 +575,12 @@ sound_restore:
 hw_install:
 	move.w	sr,-(sp)
 	or.w	#$0700,sr
+	cmp.l	#40,cpu_cookie			; 68040 / 68060 (CT60, CT63...) : autres bits
+	beq.s	.c060				; du CACR, caches à recopie (copyback)
+	cmp.l	#60,cpu_cookie
+	beq.s	.c060
 	cmp.l	#30,cpu_cookie			; CACR et $FFFF8007 : 68030 seulement
-	bne.s	.speed_kept			; (68040/68060 des cartes accélératrices : autres bits)
+	bne.s	.speed_kept
 	move.w	#1,is_030
 	movec	cacr,d0
 	move.l	d0,old_cacr
@@ -576,6 +593,18 @@ hw_install:
 	btst	#OPT_8MHZ,options+1
 	beq.s	.speed_kept
 	and.b	#%11011010,$ffff8007.w		; CPU et blitter à 8 MHz, bus STE
+	bra.s	.speed_kept
+; 68040/68060 : caches coupés pendant le chargement (le jeu est décompressé puis relogé),
+; après avoir écrit en mémoire le contenu du cache de données (CPUSHA)
+.c060:	move.w	#1,is_060
+	movec	cacr,d0
+	move.l	d0,old_cacr
+	btst	#OPT_CACHE,options+1
+	bne.s	.speed_kept
+	CPUSHA_BC
+	moveq	#0,d0
+	movec	d0,cacr
+	CINVA_BC
 .speed_kept:
 
 ; relais : pour chaque vecteur n, « move.l (n*4).w,-(sp) ; rts »
@@ -601,21 +630,26 @@ hw_install:
 	move.w	#1,div60			; 60 Hz : 5 VBL sur 6
 .no60:
 	move.l	old_cacr,d0			; caches du mode fluide : ceux du TOS,
+	tst.w	is_060
+	bne.s	.cv6
 	and.w	#$3111,d0			; ou WA+DBE+ED+IBE+EI s'il les avait coupés
 	btst	#0,d0
 	bne.s	.cv
 	move.w	#$3111,d0
 .cv:	or.w	#$0808,d0			; vidés à l'allumage
-	move.l	d0,cache_on_value
+	bra.s	.cvs
+.cv6:	and.l	#$a080c000,d0			; 68060 : EDC ESB EBC EIC (et NAI), 68040 : DE IE
+	tst.w	d0
+	bmi.s	.cvs
+	move.l	#$80008000,d0			; caches coupés par le TOS : données, instructions
+	cmp.l	#60,cpu_cookie
+	bne.s	.cvs
+	move.l	#$a0808000,d0			; + tampon d'écriture et cache de branchements
+.cvs:	move.l	d0,cache_on_value
 	move.l	#ebuf_mem+255,d0		; écrans des images extrapolées
 	and.l	#$ffffff00,d0
 	move.l	d0,ebuf
-	tst.w	is_030
-	beq.s	.noflush
-	movec	cacr,d0				; les relais sont du code : vider le cache d'instructions
-	or.w	#$0808,d0
-	movec	d0,cacr
-.noflush:
+	bsr	flush_ic			; les relais sont du code
 	movec	vbr,d0
 	move.l	d0,old_vbr
 	lea	vectab,a0
@@ -641,6 +675,13 @@ hw_restore:
 	move.b	old_byte_ff,$ff.w
 	move.l	old_vbr,d0
 	movec	d0,vbr
+	tst.w	is_060
+	beq.s	.not060
+	CPUSHA_BC
+	move.l	old_cacr,d0
+	movec	d0,cacr
+	CINVA_BC
+.not060:
 	tst.w	is_030
 	beq.s	.not030
 	move.b	old_busctrl,$ffff8007.w
@@ -665,11 +706,7 @@ vbl_hook:
 	bsr	kbd_joy
 .nokj:	tst.w	icache_on
 	beq.s	.nofl
-	move.l	d0,-(sp)
-	movec	cacr,d0
-	bset	#3,d0				; CI : vide le cache d'instructions
-	movec	d0,cacr
-	move.l	(sp)+,d0
+	bsr	flush_ic
 .nofl:	tst.w	div60
 	beq.s	.pass
 	subq.w	#1,vbl_phase
@@ -715,14 +752,11 @@ kbd_joy:
 	move.b	d1,f1_prev
 	tst.b	d1
 	beq.s	.k6
-	tst.b	dbl_req			; normal <-> fluide : x2 (cadence stable), ou x3
-	beq.s	.f1on				; adaptatif avec l'option 3 (Falcon accéléré)
+	tst.b	dbl_req			; normal <-> fluide (dbl_max : x2, x3 ou x6)
+	beq.s	.f1on
 	clr.b	dbl_req
 	bra.s	.k6
-.f1on:	move.b	#1,dbl_req
-	btst	#OPT_X3,options+1
-	beq.s	.k6
-	move.b	#2,dbl_req
+.f1on:	move.b	dbl_max,dbl_req
 .k6:	move.b	kj_prev,d1
 	move.b	d0,kj_prev
 	or.b	d0,d1
@@ -773,10 +807,12 @@ detect_game:
 	move.w	#1,game_ok
 	btst	#OPT_ORIG,options+1
 	bne	.no
-	tst.w	is_030
+	move.w	is_030,d0
+	or.w	is_060,d0
 	beq.s	.nocache
 	btst	#OPT_NOCACHE,options+1
 	bne.s	.nocache
+	bsr	flush_ic
 	move.l	cache_on_value,d0		; le jeu est en place : caches allumés
 	movec	d0,cacr
 	move.w	#1,icache_on
@@ -788,7 +824,18 @@ detect_game:
 	move.w	#1,interp_on
 	bra.s	.hooked
 .nointerp:
-	move.l	#tick_hook,G_WAITCALL+2(a0)	; jsr tick_hook (F1 : logique doublée)
+	move.l	#tick_hook,G_WAITCALL+2(a0)	; jsr tick_hook (F1 : logique accélérée)
+	move.b	#1,dbl_max			; F1 : x2 (Falcon 16 MHz : cadence stable),
+	btst	#OPT_X3,options+1		; x3 adaptatif avec l'option 3,
+	bne.s	.mx3
+	btst	#OPT_X6-8,options
+	bne.s	.mx6
+	tst.w	is_060				; x6 adaptatif avec l'option 6 ou sur 68040/060
+	beq.s	.hooked				; (fluide dès le départ)
+	move.b	#3,dbl_req
+.mx6:	move.b	#3,dbl_max
+	bra.s	.hooked
+.mx3:	move.b	#2,dbl_max
 .hooked:
 	bsr	turbo_reloc			; adresses du jeu dans turbo.s
 	tst.w	icache_on			; code que le jeu modifie : cache vidé
@@ -807,11 +854,7 @@ detect_game:
 	move.l	#'CHK!',chk_magic
 	endc
 .noturbo:
-	tst.w	is_030
-	beq.s	.no
-	movec	cacr,d0
-	bset	#3,d0				; code modifié : vider le cache d'instructions
-	movec	d0,cacr
+	bsr	flush_ic			; code modifié
 .no:	movem.l	(sp)+,d0/a0-a1
 	rts
 
@@ -1034,79 +1077,109 @@ tick_hook:
 	bne.s	.w
 	move.b	dbl_req,d0
 	cmp.b	#2,d0
-	bne.s	.w
-; x3 adaptatif : 2 VBL par tour tant que le tour y tient, sinon 3 (x2) ; compteur de VBL
-; restantes à l'entrée : en x3 (2 VBL), 0 = débordé ; en x2 (3 VBL), 2 ou plus = le tour
-; a pris moins de 2 VBL
-	move.b	dbl_on,d1
-	cmp.b	#2,d1
-	bne.s	.up
+	blo.s	.w
+; adaptatif (x3 ou x6 au plus) : compteur de VBL restantes à l'entrée, rechargé à n au
+; début du tour (juste après une VBL) : n = le tour a pris moins d'une VBL, n-1 moins de
+; deux, 0 = débordé. Débordé : un niveau de moins ; un niveau de plus (x2 -> x3 : compteur
+; >= 2 sur 3, x3 -> x6 : 2 sur 2) après 8 tours de suite qui y tiennent.
+	move.b	d0,d2				; niveau le plus haut
+	moveq	#0,d0
+	move.b	dbl_on,d0
+	bne.s	.cur
+	moveq	#1,d0				; départ : x2
+	clr.b	dbl_good
+.cur:	cmp.b	#1,d0
+	beq.s	.up
 	tst.b	G_COUNTER(a6)
-	bne.s	.w
-	moveq	#1,d0
+	bne.s	.up
+	subq.b	#1,d0				; débordé
+	clr.b	dbl_good
 	bra.s	.w
-.up:	cmp.b	#1,d1
-	bne.s	.w
+.up:	cmp.b	d2,d0
+	bhs.s	.top
 	cmp.b	#2,G_COUNTER(a6)
-	bhs.s	.w
-	moveq	#1,d0
+	blo.s	.bad
+	addq.b	#1,dbl_good
+	cmp.b	#8,dbl_good
+	blo.s	.w
+	addq.b	#1,d0
+.bad:	clr.b	dbl_good
+	bra.s	.w
+.top:	move.b	d2,d0
 .w:	cmp.b	dbl_on,d0
 	beq.s	.same
 	move.b	d0,dbl_on
-	bsr.s	dbl_patch
-.same:	moveq	#0,d0				; chrono : 0,13 s par tour de 6 VBL, donc
-	move.b	dbl_on,d0			; 13 x n / 6 centièmes par tour de n VBL
-	beq.s	.nc				; (reste gardé)
+	bsr	dbl_patch
+.same:	moveq	#0,d0
+	move.b	dbl_on,d0
+	beq.s	.nc
+; pas de temps : $EE x n / 6 par tour de n VBL, reste gardé (x3 : $4F $4F $50, x6 : $27
+; $28 $28...) ; chrono : 0,13 s par tour de 6 VBL, donc 13 x n / 6 centièmes, reste gardé
 	moveq	#0,d1
 	move.b	rel_val(pc,d0.w),d1
-	mulu.w	#13,d1
-	add.w	chr_rem,d1
+	move.w	d1,d3
+	mulu.w	#$ee,d1
+	add.w	dt_rem,d1
 	divu.w	#6,d1
-	move.b	d1,G_CHRONO(a6)			; < 10 : même valeur en BCD
+	move.b	d1,d2
 	swap	d1
-	move.w	d1,chr_rem
+	move.w	d1,dt_rem
+	bsr	set_dt
+	mulu.w	#13,d3
+	add.w	chr_rem,d3
+	divu.w	#6,d3
+	move.b	d3,G_CHRONO(a6)			; < 10 : même valeur en BCD
+	swap	d3
+	move.w	d3,chr_rem
 	bsr	flush_ic
 .nc:	movem.l	(sp)+,d0-d3/a0-a2/a6
 	jmp	([wait_addr])
 
-; niveau d0.b (0 : jeu d'origine, 1 : x2, 2 : x3) ; chaque site est vérifié (une des valeurs
-; connues) avant d'être modifié ; a6 = base
-dbl_patch:
-	ext.w	d0
+; facteur de pas d2.b sur les 22 sites (chacun vérifié : la dernière valeur posée)
+set_dt:
+	cmp.b	dt_cur,d2
+	beq.s	.out
+	move.l	d1,-(sp)
 	lea	dbl_dt,a1
-	move.b	dt_val(pc,d0.w),d2
 .d:	move.l	(a1)+,d1
-	beq.s	.rel
+	beq.s	.e
 	lea	-$10100+3(a6,d1.l),a0
 	move.b	(a0),d1
-	cmp.b	#$ee,d1
-	beq.s	.dw
-	cmp.b	#$77,d1
-	beq.s	.dw
-	cmp.b	#$4f,d1
+	cmp.b	dt_cur,d1
 	bne.s	.d
-.dw:	move.b	d2,(a0)
+	move.b	d2,(a0)
 	bra.s	.d
+.e:	move.b	d2,dt_cur
+	move.l	(sp)+,d1
+.out:	rts
+
+; niveau d0.b (0 : jeu d'origine, 1 : x2, 2 : x3, 3 : x6) ; chaque site est vérifié (une
+; des valeurs connues) avant d'être modifié ; a6 = base
+dbl_patch:
+	ext.w	d0
+	clr.w	dt_rem
+	tst.w	d0
+	bne.s	.rel
+	move.b	#$ee,d2				; jeu d'origine
+	bsr.s	set_dt
 .rel:	lea	G_RELOAD+3(a6),a0		; VBL par tour
 	move.b	(a0),d1
-	cmp.b	#6,d1
-	beq.s	.rw
-	cmp.b	#3,d1
-	beq.s	.rw
-	cmp.b	#2,d1
+	lea	rel_val(pc),a1
+	moveq	#4-1,d2
+.rk:	cmp.b	(a1)+,d1
+	dbeq	d2,.rk
 	bne.s	.damp
-.rw:	move.b	rel_val(pc,d0.w),(a0)
+	move.b	rel_val(pc,d0.w),(a0)
 .damp:	lea	G_DAMP(a6),a0			; amortisseur
 	move.w	d0,d2
 	add.w	d2,d2
 	move.w	(a0),d1
-	cmp.w	#$0114,d1
-	beq.s	.mw
-	cmp.w	#$0228,d1
-	beq.s	.mw
-	cmp.w	#$033c,d1
+	lea	damp_val(pc),a1
+	moveq	#4-1,d3
+.mk:	cmp.w	(a1)+,d1
+	dbeq	d3,.mk
 	bne.s	.yaw
-.mw:	move.w	damp_val(pc,d2.w),(a0)
+	move.w	damp_val(pc,d2.w),(a0)
 .yaw:	move.w	mul_val(pc,d2.w),yaw_mul
 	lea	G_YAW(a6),a0			; réalignement du cap
 	tst.w	d0
@@ -1127,10 +1200,20 @@ dbl_patch:
 	move.l	#$4840ee48,4(a0)
 .chr:	lea	G_CHRONO(a6),a0			; chrono : $13 d'origine
 	tst.w	d0
-	bne.s	flush_ic
+	bne.s	.f
 	move.b	#$13,(a0)
+.f:	bra	flush_ic
+rel_val:	dc.b	6,3,2,1
+	even
+damp_val:	dc.w	$0114,$0228,$033c,$0678
+mul_val:	dc.w	$ffff,$8000,$5556,$2aab
+
+; code modifié : vider le cache d'instructions (68030 : CI) ; 68040/68060 : cache de
+; données écrit en mémoire et caches vidés (CPUSHA), puis cache de branchements (CABC)
 flush_ic:
-	tst.w	is_030				; code modifié : vider le cache d'instructions
+	tst.w	is_060
+	bne.s	.f6
+	tst.w	is_030
 	beq.s	.nf
 	move.l	d1,-(sp)
 	movec	cacr,d1
@@ -1138,11 +1221,15 @@ flush_ic:
 	movec	d1,cacr
 	move.l	(sp)+,d1
 .nf:	rts
-dt_val:		dc.b	$ee,$77,$4f
-rel_val:	dc.b	6,3,2
-	even
-damp_val:	dc.w	$0114,$0228,$033c
-mul_val:	dc.w	$ffff,$8000,$5556
+.f6:	CPUSHA_BC
+	cmp.l	#60,cpu_cookie
+	bne.s	.nf
+	move.l	d1,-(sp)
+	movec	cacr,d1
+	bset	#22,d1				; CABC
+	movec	d1,cacr
+	move.l	(sp)+,d1
+	rts
 
 ; réalignement du cap ($4E6FC : muls.w d3,d0 ; asl.l #1,d0 ; swap d0 ; lsr.w #7,d0) : même
 ; calcul, divisé par le facteur (yaw_mul / 65536 : 1/2 ou 1/3)
@@ -1517,16 +1604,52 @@ priv_violation:
 
 ; ---------------------------------------------------------------------------
 	ifeq	AUTO
+; GAME.PUT est chargé (Pexec 3), son chargeur JEK corrigé pour l'adressage 32 bits, puis
+; lancé (Pexec 6 : mémoire rendue à la fin). Le chargeur écrit la palette en $0FFF8240,
+; qui n'est $FF8240 qu'en adressage 24 bits (Falcon d'origine) : en 32 bits (CT60, TT-RAM)
+; c'est une erreur de bus. $FFFF8240 convient aux deux.
 run_game:
 	move.l	#null_env,-(sp)			; environnement vide
 	pea	null_cmd
 	pea	game_name
-	clr.w	-(sp)				; charger et lancer
+	move.w	#3,-(sp)			; charger seulement
 	move.w	#$4b,-(sp)			; Pexec
 	trap	#1
 	lea	16(sp),sp
 	move.l	d0,exec_result
-	rts
+	bmi.s	.out
+	move.l	d0,a0
+	move.l	8(a0),a1			; TEXT
+	lea	jek_tab(pc),a2
+.p:	move.w	(a2)+,d1			; décalage de l'adresse, opcode attendu avant
+	beq.s	.run
+	move.w	(a2)+,d2
+	cmp.w	-2(a1,d1.w),d2
+	bne.s	.p
+	cmp.l	#$0fff8240,(a1,d1.w)
+	bne.s	.p
+	move.l	#$ffff8240,(a1,d1.w)
+	addq.w	#1,jek_count
+	bra.s	.p
+.run:	move.l	a0,-(sp)
+	pea	flush_sup(pc)			; code écrit : caches
+	move.w	#38,-(sp)			; Supexec
+	trap	#14
+	addq.l	#6,sp
+	move.l	(sp)+,a0
+	clr.l	-(sp)
+	move.l	a0,-(sp)			; basepage
+	clr.l	-(sp)
+	move.w	#6,-(sp)			; lancer, puis libérer
+	move.w	#$4b,-(sp)
+	trap	#1
+	lea	16(sp),sp
+	move.l	d0,exec_result
+.out:	rts
+flush_sup:
+	bra	flush_ic
+; JEK : « move.w $1de(pc),$0FFF8240 », « move.w $0FFF8240,(a2) », « move.w a2,$0FFF8240 »
+jek_tab:	dc.w	$80,$01de,$172,$34b9,$216,$33ca,0
 
 report_exec:
 	move.l	exec_result,d0
@@ -1571,12 +1694,6 @@ txt_ot:	dc.b	" sans-turbo",0
 txt_of:	dc.b	" fluide",0
 txt_crlf:
 	dc.b	13,10,0
-txt_addr32:
-	dc.b	"Adressage 32 bits : le chargeur du jeu",13,10
-	dc.b	"(JEK Packer) ecrit en $0FFF8240, qui n'existe",13,10
-	dc.b	"qu'en adressage 24 bits (Falcon d'origine).",13,10
-	dc.b	"Sous Hatari : cocher 24-bit addressing",13,10
-	dc.b	"(--addr24 on) et retirer la TT-RAM.",13,10,0
 txt_notfalcon:
 	dc.b	"Pas de VIDEL : lancement direct.",13,10,0
 txt_mono:
@@ -1601,6 +1718,7 @@ inf_name:
 	even
 vbl_phase:
 	dc.w	6
+dt_cur:	dc.b	$ee				; facteur de pas posé sur les 22 sites
 	even
 	include	"snaptab.s"
 	ifd	DBG
@@ -1628,6 +1746,7 @@ old_phys:	ds.l	1
 old_log:	ds.l	1
 screen:		ds.l	1
 exec_result:	ds.l	1
+jek_count:	ds.w	1
 old_vbl_m:	ds.l	1
 vbl_count:	ds.l	1
 vbl_per_halfsec: ds.w	1
@@ -1637,6 +1756,7 @@ old_adderin:	ds.w	1
 old_adcinput:	ds.w	1
 hw_installed:	ds.w	1
 is_030:		ds.w	1
+is_060:		ds.w	1			; 68040 ou 68060
 old_cacr:	ds.l	1
 old_vbr:	ds.l	1
 old_busctrl:	ds.w	1
@@ -1659,6 +1779,9 @@ dbl_on:		ds.b	1
 		even
 yaw_mul:	ds.w	1
 chr_rem:	ds.w	1
+dt_rem:		ds.w	1
+dbl_max:	ds.b	1
+dbl_good:	ds.b	1
 		even
 have_prev:	ds.w	1
 last_call:	ds.l	1

@@ -15,7 +15,7 @@ version **Atari ST**, et réplique jouable sur PC dont tous les réglages sont m
 | `replica/` | la réplique (HTML5 / JavaScript, sans dépendance) |
 | `tools/` | outils de rétro-ingénierie : extraction, décompression, décodage des circuits, émulateur ST de test, désassembleur |
 | `docs/RETRO_INGENIERIE.md` | formats, adresses, routines décompilées, méthode de vérification |
-| `falcon/` | **version Falcon030** : lanceur `SCRF030.PRG` (le jeu d'origine en mode ST compatible, caches, VBL 60 Hz, `move sr`, routines réécrites pour le 68030, flèches et Espace = joystick, F1 = jeu fluide : logique accélérée, 16,7 ou 25 vraies images/s), disquette Falcon, tests sous Hatari |
+| `falcon/` | **version Falcon030** : lanceur `SCRF030.PRG` (le jeu d'origine en mode ST compatible, caches, VBL 60 Hz, `move sr`, routines réécrites pour le 68030, flèches et Espace = joystick, F1 = jeu fluide : logique accélérée, 16,7 ou 25 vraies images/s ; Falcon à 68060 CT60/CT63 : adressage 32 bits, caches 68060, 50 images/s), disquette Falcon, tests sous Hatari |
 | `docs/FALCON030.md` | version Falcon030 : ce qui est traité, mode fluide, résultats des tests Hatari, profil (pourquoi pas le DSP) |
 
 ## Deux moteurs
