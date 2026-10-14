@@ -712,7 +712,15 @@ vbl_hook:
 	subq.w	#1,vbl_phase
 	bne.s	.pass
 	move.w	#6,vbl_phase
-	rte
+	tst.w	cnt_real			; logique accélérée à 60 Hz : la VBL retenue
+	beq.s	.drop				; compte quand même pour le tour (comme $4EC2C)
+	move.l	a0,-(sp)
+	move.l	game_base,a0
+	tst.b	G_COUNTER(a0)
+	beq.s	.d0
+	subq.b	#1,G_COUNTER(a0)
+.d0:	move.l	(sp)+,a0
+.drop:	rte
 .pass:	tst.w	interp_on
 	beq.s	.go
 	bsr	vbl_flip
@@ -825,7 +833,11 @@ detect_game:
 	bra.s	.hooked
 .nointerp:
 	move.l	#tick_hook,G_WAITCALL+2(a0)	; jsr tick_hook (F1 : logique accélérée)
-	move.b	#1,dbl_max			; F1 : x2 (Falcon 16 MHz : cadence stable),
+	move.l	#lvl_50,lvl_set
+	tst.w	div60
+	beq.s	.l50
+	move.l	#lvl_60,lvl_set			; 60 Hz : tours en vraies VBL
+.l50:	move.b	#1,dbl_max			; F1 : x2 (Falcon 16 MHz : cadence stable),
 	btst	#OPT_X3,options+1		; x3 adaptatif avec l'option 3,
 	bne.s	.mx3
 	btst	#OPT_X6-8,options
@@ -1114,20 +1126,22 @@ tick_hook:
 	move.b	dbl_on,d0
 	beq.s	.nc
 ; pas de temps : $EE x n / 6 par tour de n VBL, reste gardé (x3 : $4F $4F $50, x6 : $27
-; $28 $28...) ; chrono : 0,13 s par tour de 6 VBL, donc 13 x n / 6 centièmes, reste gardé
+; $28 $28...) ; chrono : 0,13 s par tour de 6 VBL, donc 13 x n / 6 centièmes, reste gardé.
+; À 60 Hz (VBL comptées en vraies VBL) : n vraies VBL = 5n/6 VBL du jeu, $EE x 5n / 36.
+	move.l	lvl_set,a1
 	moveq	#0,d1
-	move.b	rel_val(pc,d0.w),d1
+	move.b	LS_REL(a1,d0.w),d1
 	move.w	d1,d3
-	mulu.w	#$ee,d1
+	mulu.w	LS_DTN(a1),d1
 	add.w	dt_rem,d1
-	divu.w	#6,d1
+	divu.w	LS_DEN(a1),d1
 	move.b	d1,d2
 	swap	d1
 	move.w	d1,dt_rem
 	bsr	set_dt
-	mulu.w	#13,d3
+	mulu.w	LS_CHN(a1),d3
 	add.w	chr_rem,d3
-	divu.w	#6,d3
+	divu.w	LS_DEN(a1),d3
 	move.b	d3,G_CHRONO(a6)			; < 10 : même valeur en BCD
 	swap	d3
 	move.w	d3,chr_rem
@@ -1153,34 +1167,35 @@ set_dt:
 	move.l	(sp)+,d1
 .out:	rts
 
-; niveau d0.b (0 : jeu d'origine, 1 : x2, 2 : x3, 3 : x6) ; chaque site est vérifié (une
-; des valeurs connues) avant d'être modifié ; a6 = base
+; niveau d0.b (0 : jeu d'origine, 1 : x2, 2 : x3, 3 : x6 ; à 60 Hz : 15, 20, 30 images/s) ;
+; chaque site est vérifié (valeur d'origine ou posée par nous) avant d'être modifié ; a6 = base
 dbl_patch:
 	ext.w	d0
 	clr.w	dt_rem
+	clr.w	cnt_real
 	tst.w	d0
-	bne.s	.rel
+	bne.s	.acc
 	move.b	#$ee,d2				; jeu d'origine
 	bsr.s	set_dt
-.rel:	lea	G_RELOAD+3(a6),a0		; VBL par tour
+	bra.s	.rel
+.acc:	move.w	div60,cnt_real			; 60 Hz : le compteur suit les vraies VBL
+.rel:	move.l	lvl_set,a1
+	lea	G_RELOAD+3(a6),a0		; VBL par tour
 	move.b	(a0),d1
-	lea	rel_val(pc),a1
-	moveq	#4-1,d2
-.rk:	cmp.b	(a1)+,d1
-	dbeq	d2,.rk
-	bne.s	.damp
-	move.b	rel_val(pc,d0.w),(a0)
+	beq.s	.damp
+	cmp.b	#6,d1
+	bhi.s	.damp
+	move.b	LS_REL(a1,d0.w),(a0)
 .damp:	lea	G_DAMP(a6),a0			; amortisseur
 	move.w	d0,d2
 	add.w	d2,d2
 	move.w	(a0),d1
-	lea	damp_val(pc),a1
-	moveq	#4-1,d3
-.mk:	cmp.w	(a1)+,d1
-	dbeq	d3,.mk
-	bne.s	.yaw
-	move.w	damp_val(pc,d2.w),(a0)
-.yaw:	move.w	mul_val(pc,d2.w),yaw_mul
+	cmp.w	#$0114,d1
+	blo.s	.yaw
+	cmp.w	#$0678,d1
+	bhi.s	.yaw
+	move.w	LS_DAMP(a1,d2.w),(a0)
+.yaw:	move.w	LS_MUL(a1,d2.w),yaw_mul
 	lea	G_YAW(a6),a0			; réalignement du cap
 	tst.w	d0
 	beq.s	.yo
@@ -1203,10 +1218,23 @@ dbl_patch:
 	bne.s	.f
 	move.b	#$13,(a0)
 .f:	bra	flush_ic
-rel_val:	dc.b	6,3,2,1
-	even
-damp_val:	dc.w	$0114,$0228,$033c,$0678
-mul_val:	dc.w	$ffff,$8000,$5556,$2aab
+; niveaux 0..3 : VBL par tour, amortisseur ($114 x facteur), cap (65536 / facteur), pas de
+; temps et chrono par VBL (numérateur, dénominateur commun)
+LS_REL		equ	0
+LS_DAMP		equ	4
+LS_MUL		equ	12
+LS_DTN		equ	20
+LS_DEN		equ	22
+LS_CHN		equ	24
+lvl_50:	dc.b	6,3,2,1				; x1, x2, x3, x6
+	dc.w	$0114,$0228,$033c,$0678
+	dc.w	$ffff,$8000,$5556,$2aab
+	dc.w	$ee,6,13
+; 60 Hz : n vraies VBL par tour (facteur 36 / 5n) : 15, 20, 30 images/s, cadence fixe
+lvl_60:	dc.b	6,4,3,2				; x1, x1,8, x2,4, x3,6
+	dc.w	$0114,$01f1,$0296,$03e2
+	dc.w	$ffff,$8e39,$6aab,$471c
+	dc.w	$ee*5,36,13*5
 
 ; code modifié : vider le cache d'instructions (68030 : CI) ; 68040/68060 : cache de
 ; données écrit en mémoire et caches vidés (CPUSHA), puis cache de branchements (CABC)
@@ -1780,6 +1808,8 @@ dbl_on:		ds.b	1
 yaw_mul:	ds.w	1
 chr_rem:	ds.w	1
 dt_rem:		ds.w	1
+cnt_real:	ds.w	1
+lvl_set:	ds.l	1
 dbl_max:	ds.b	1
 dbl_good:	ds.b	1
 		even

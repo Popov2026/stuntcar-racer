@@ -56,6 +56,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     normal        un tour de jeu toutes les 6 VBL : 8,33 images/s (jeu d'origine)
     fluide        toutes les 3 VBL, pas de temps moitié : 16,7 images/s, cadence stable
                   sur un Falcon030 à 16 MHz (un tour de course y tient presque toujours)
+                  (à 60 Hz, VGA : toutes les 4 vraies VBL, 15 images/s régulières ;
+                  option 3 : 20 images/s)
   Avec l'option 3 (SCRF030.INF), F1 passe en « très fluide » : toutes les 2 VBL, pas de
   temps divisé par 3, 25 images/s, et 3 VBL pour le tour suivant dès qu'un tour ne tient
   pas en 2. Sur un Falcon à 16 MHz, la cadence varie alors entre 25 et 16,7 selon la
@@ -85,8 +87,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   ST-RAM), et les caches du 68040/68060 (vidés avec CPUSHA/CPUSHL quand du code est
   modifié). Le jeu démarre en logique x6 : un tour par VBL, 50 vraies images/s, et un
   niveau de moins (x3, puis x2) dès qu'un tour déborde. On remonte quand 8 tours de suite
-  tiennent. F1 rend le jeu normal. En VGA 60 Hz, le jeu voit 50 VBL par seconde : une image
-  sur six reste affichée deux VBL. Sous Hatari, à une horloge de 128 MHz, 97 % des images
+  tiennent. F1 rend le jeu normal. À 60 Hz (VGA, RVB NTSC), la cadence suit les vraies VBL :
+  30 images/s régulières (une image toutes les 2 VBL), puis 20 et 15 si un tour déborde. Sous Hatari, à une horloge de 128 MHz, 97 % des images
   de course sont à une VBL. La gestion des caches du 68060 n'a pas pu être essayée sur une
   vraie carte (Hatari ne les émule pas) : en cas de souci, essayer l'option K (caches
   coupés, plus lent).

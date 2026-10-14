@@ -97,8 +97,19 @@ Le même `SCRF030.PRG` reconnaît le processeur (cookie `_CPU` = 40 ou 60) :
   16 MHz), l'option `3` limite à ×3. Moteur fidèle (`double_test.js traj 6`) : vitesses à
   2 % près jusqu'au premier saut.
 
-En VGA (60 Hz), la correction 60 Hz reste active : le jeu voit 50 VBL/s, une image sur six
-est donc tenue deux VBL (50 images/s sur un écran à 60 Hz).
+**À 60 Hz** (VGA, RVB NTSC), la correction 60 Hz garde la VBL du jeu (son, compteurs) à
+50 Hz, mais une cadence de 50 tours/s sur un écran à 60 Hz tiendrait une image sur six deux
+VBL. En logique accélérée, le compteur de VBL du tour (`$4EC20`) suit donc les **vraies**
+VBL : la VBL retenue le décrémente aussi (comme le fait la VBL du jeu en `$4EC2C`). Les
+niveaux deviennent 4, 3 et 2 vraies VBL par tour : **15, 20 et 30 images/s à cadence
+fixe**, avec un pas de temps `$EE` × 5n / 36 (reste gardé), un chrono 65 × n / 36,
+l'amortisseur et le cap au facteur 36 / 5n (1,8, 2,4 et 3,6 : `$1F1`, `$296`, `$3E2` ;
+`#$8E39`, `#$6AAB`, `#$471C`). Sur 68040/68060 en VGA : 30 images/s. Sur Falcon030 en VGA,
+F1 donne 15 images/s régulières (au lieu de 16,7 irrégulières), l'option 3 20 images/s.
+Sous Hatari en RVB NTSC (Hatari affiche le VGA en ST basse à 50 Hz) : 68060 à 128 MHz,
+1 115 images à 2 VBL ; Falcon030 16 MHz exact avec F1, 570 à 4 VBL, sans exception (le
+reste : grue et départ, au rythme d'origine). Même partie, mêmes commandes : écart avec
+l'adversaire 1 547 et −1 230 à 30 images/s, 1 517 et −1 259 à 15 images/s.
 
 Sous Hatari (`--machine falcon --cpulevel 6 --addr24 off --ttram 64 --fpu internal`,
 EmuTOS) : le jeu se charge et tourne en adressage 32 bits avec TT-RAM. Hatari ne dépasse pas
