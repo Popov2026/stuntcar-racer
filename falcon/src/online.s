@@ -764,12 +764,30 @@ net_vbl:
 	beq.s	.out
 	tst.w	net_busy
 	bne.s	.out
+; jamais dans un appel au système : le pilote du port série (ou STinG) n'est pas réentrant. Le
+; PC interrompu (cadre de vbl_hook, après notre adresse de retour) doit être dans le jeu, ou,
+; avant que le jeu soit reconnu (chargement), hors de la ROM du TOS
+	move.l	d0,-(sp)
+	move.l	4+4+2(sp),d0
+	tst.w	game_ok
+	beq.s	.ld
+	sub.l	game_base,d0			; dans le jeu ($10100 à $70100)
+	cmp.l	#$60000,d0
+	bhs.s	.skip
+	bra.s	.go
+.ld:	cmp.l	#$e00000,d0			; ROM du TOS : $E00000 à $EFFFFF
+	blo.s	.go
+	cmp.l	#$f00000,d0
+	blo.s	.skip
+.go:	move.l	(sp)+,d0
 	movem.l	d0-d2/a0-a1,-(sp)
 	move.w	#1,net_busy
 	NETCALL	4
 	clr.w	net_busy
 	movem.l	(sp)+,d0-d2/a0-a1
 .out:	rts
+.skip:	move.l	(sp)+,d0
+	rts
 
 	data
 txt_net1:
