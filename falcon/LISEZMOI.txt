@@ -53,13 +53,13 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   versions réécrites pour le 68030 (tracé des bords de polygones, sprites du cockpit), au
   résultat identique octet pour octet : chaque image est une vraie image du jeu.
 
-  Touche F1 : JEU FLUIDE (F1 à nouveau : jeu normal).
-    normal        un tour de jeu toutes les 6 VBL : 8,33 images/s (jeu d'origine)
+  Le jeu démarre FLUIDE. Touche F1 : jeu d'origine (F1 à nouveau : fluide).
     fluide        toutes les 3 VBL, pas de temps moitié : 16,7 images/s, cadence stable
                   sur un Falcon030 à 16 MHz (un tour de course y tient presque toujours)
                   (à 60 Hz, VGA : toutes les 4 vraies VBL, 15 images/s régulières ;
                   option 3 : 20 images/s)
-  Avec l'option 3 (SCRF030.INF), F1 passe en « très fluide » : toutes les 2 VBL, pas de
+    d'origine     un tour de jeu toutes les 6 VBL : 8,33 images/s (Atari d'origine)
+  Avec l'option 3 (SCRF030.INF), le mode fluide est « très fluide » : toutes les 2 VBL, pas de
   temps divisé par 3, 25 images/s, et 3 VBL pour le tour suivant dès qu'un tour ne tient
   pas en 2. Sur un Falcon à 16 MHz, la cadence varie alors entre 25 et 16,7 selon la
   scène : réservé aux Falcon accélérés. Ce sont de vraies images du jeu, sans image
@@ -81,44 +81,24 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   rappelé avec caméra et adversaire prolongés), environ 20 images/s sous Hatari. Elles
   ont des défauts visibles : la caméra prolongée se trompe sur les bosses et les sauts
   (l'image tressaute), et le jeu dessine certaines choses (roues avant, tableau de bord)
-  dans l'écran affiché, qui manquent alors sur ces images. Préférez F1.
+  dans l'écran affiché, qui manquent alors sur ces images. Préférez le mode fluide.
 
   DEUX LANCEURS :
     SCRF030.PRG   Falcon030 (d'origine ou accéléré) ;
-    SCRCT60.PRG   Falcon à 68060 (CT60, CT63) ou 68040 : tout ce qui suit, plus les modes
-                  HD (F2) et texturé (F3). Options dans SCRCT60.INF.
+    SCRCT60.PRG   Falcon à 68060 (CT60, CT63) ou 68040 : tout ce qui suit. Options dans
+                  SCRCT60.INF.
   Sur une carte 68060, SCRCT60.PRG gère l'adressage 32 bits et la TT-RAM (le jeu et l'écran restent en
   ST-RAM), et les caches du 68040/68060 (vidés avec CPUSHA/CPUSHL quand du code est
   modifié). Le jeu démarre en logique x6 : un tour par VBL, 50 vraies images/s, et un
   niveau de moins (x3, puis x2) dès qu'un tour déborde. On remonte quand 8 tours de suite
-  tiennent. F1 rend le jeu normal. À 60 Hz (VGA, RVB NTSC), la cadence suit les vraies VBL :
+  tiennent. F1 : jeu d'origine. À 60 Hz (VGA, RVB NTSC), la cadence suit les vraies VBL :
   30 images/s régulières (une image toutes les 2 VBL), puis 20 et 15 si un tour déborde. Sous Hatari, à une horloge de 128 MHz, 97 % des images
   de course sont à une VBL. La gestion des caches du 68060 n'a pas pu être essayée sur une
   vraie carte (Hatari ne les émule pas) : en cas de souci, essayer l'option K (caches
   coupés, plus lent).
   Sur CT60, lancer SCRCT60.PRG depuis le disque dur : depuis la disquette, c'est le menu
-  du jeu qui charge GAME.PUT (F030AUTO.PRG ne peut pas corriger son chargeur, et n'a pas les
-  modes HD), ce qui suppose l'adressage 24 bits.
-
-  Au lancement, SCRCT60.PRG affiche si F2/F3 sont disponibles, sinon pourquoi (processeur,
-  FPU, moniteur VGA, mémoire), et écrit SCRCT60.LOG dans son dossier : processeur, FPU
-  (cookie et essai), moniteur, état du mode HD, adresses, registres du VIDEL des deux modes.
-  À envoyer en cas de problème.
-
-  Falcon à 68060/68040 avec FPU, moniteur VGA : deux modes de plus.
-    F2   MODE HD : la scène 3D est redessinée en 640x400 (écran 640x480, 16 couleurs, la
-         palette du jeu), cockpit du jeu agrandi deux fois et incrusté, voiture adverse en
-         3D. F2 à nouveau : jeu d'origine.
-    F3   MODE TEXTURÉ : le mode HD avec des motifs sur la route, le sol et les flancs.
-         F3 à nouveau : jeu d'origine (F2 / F3 passent de l'un à l'autre).
-  La partie reste celle du jeu d'origine : sa logique tourne sans changement, seul son décor
-  3D n'est plus affiché. La scène est recalculée par un moteur écrit en C pour le 68060
-  (falcon/hd/hd.c) à partir de l'état du jeu : caméra, géométrie exacte du circuit (décodée
-  dans le programme du jeu), position de l'adversaire. Si une image HD est trop longue, le
-  tour suivant n'en calcule pas (le jeu garde sa vitesse, l'image HD est moins fluide).
-  Hors course (menus), retour automatique au mode du jeu. Sous Hatari, le 68060 émulé est
-  bien plus lent qu'une vraie CT60 : 2 images HD par seconde environ ; la vitesse sur une
-  vraie carte reste à mesurer.
+  du jeu qui charge GAME.PUT (F030AUTO.PRG ne peut pas corriger son chargeur), ce qui
+  suppose l'adressage 24 bits.
 
   Bordures de la piste sur 68060 : le jeu choisit la couleur du tracé de pixel en réécrivant
   ses propres instructions ; le 68060 gardait l'ancienne version en cache (bordure d'une
@@ -128,8 +108,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   Commandes : le jeu d'origine se pilote au joystick (port 1). SCRF030 y ajoute le
   clavier : les FLÈCHES font office de joystick et ESPACE de bouton, dans les menus comme
   en course (un vrai joystick marche toujours).
-    F1          jeu normal / jeu fluide (voir « Vitesse »)
-    F2 / F3     mode HD / mode texturé (68060 ou 68040 avec FPU, VGA)
+    F1          jeu d'origine / jeu fluide (fluide au départ, voir « Vitesse »)
     menus       haut/bas pour choisir, bouton (ou Espace) pour valider ; nom au clavier
     course      haut = accélérer, bas = freiner, gauche/droite = tourner, bouton = turbo
     après une sortie de piste : bouton pour reprendre (« PRESS FIRE »)
@@ -156,8 +135,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                T     sans les routines réécrites pour le 68030
                K     caches du 68030 coupés
                F     images extrapolées (expérimental, voir plus haut)
-               3     F1 passe en très fluide (25 images/s) : Falcon accéléré
-               6     F1 passe en logique x6 (50 images/s, adaptatif) : d'office sur
+               3     mode fluide en x3 (25 images/s) : Falcon accéléré
+               6     mode fluide en x6 (50 images/s, adaptatif) : d'office sur
                      68040/68060 (CT60, CT63)
 
 

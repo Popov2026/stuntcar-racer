@@ -21,7 +21,7 @@ Mode d'emploi : `falcon/LISEZMOI.txt`.
 
 Options : `8` / Shift (8 MHz et bus STE via `$FFFF8007`), `C` / Control (caches laissés),
 `N` / Alternate (pas de correction 60 Hz), `O` (jeu d'origine : ni caches, ni routines
-réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental), `3` (F1 en logique ×3), `6` (F1 en logique ×6, d'office sur 68040/68060) — touches au
+réécrites), `T` (sans les routines réécrites), `K` (caches coupés), `F` (images extrapolées, expérimental), `3` (fluide en logique ×3), `6` (fluide en logique ×6, d'office sur 68040/68060) — touches au
 lancement, ligne de commande ou première ligne de `SCRF030.INF`.
 
 Commandes : le jeu se pilote au **joystick** (port 1), menus compris (sa routine de lecture
@@ -30,7 +30,7 @@ des touches, `$46DAC`, traduit le joystick en codes de flèches). SCRF030 ajoute
 Espace, écrits dans le joystick du jeu (`$106A6`, format de son `$118`) tant qu'une de ces
 touches est enfoncée. Sous Hatari, sans émulation du joystick comme avec `--joystick 1`.
 
-### Logique accélérée (touche F1) : 8,33 → 16,7, 25 ou 50 vraies images/s
+### Logique accélérée (jeu fluide par défaut, F1 : jeu d'origine) : 8,33 → 16,7, 25 ou 50 vraies images/s
 
 F1 bascule entre normal et fluide (×2 : un tour toutes les 3 VBL, cadence stable sur un
 Falcon030 à 16 MHz) ; avec l'option `3`, entre normal et très fluide (×3 : toutes les 2 VBL,
@@ -119,41 +119,14 @@ EmuTOS) : le jeu se charge et tourne en adressage 32 bits avec TT-RAM. Hatari ne
 du 68060 ne sont pas émulés par Hatari : leur gestion n'a pas pu être essayée sur une
 vraie CT60.
 
-### Mode HD (F2) et mode texturé (F3) : Falcon à 68060/68040 avec FPU, VGA
+### Deux lanceurs
 
-Lanceur à part : `SCRCT60.PRG` (même source, `-DCT60=1`) ; `SCRF030.PRG` n'a pas les modes
-HD. Conditions, vérifiées au lancement et affichées : 68040/68060 (`_CPU`), FPU essayée
-(`fnop` sous un vecteur « ligne F » provisoire, le cookie `_FPU` n'étant pas fiable), moniteur
-VGA, 1,1 Mo (TT-RAM de préférence) + 32 Ko + 300 Ko de ST-RAM. `SCRCT60.LOG` (écrit au
-lancement) : cookies, essai de la FPU, moniteur, raison d'un refus, registres du VIDEL.
-
-`falcon/hd/hd.c` (C sans bibliothèque, `m68k-elf-gcc -m68060`, lié en 0 par `hd.ld`, binaire
-`hd.bin` et table de relogement `hdrel.s` produits par `mkblob.py`, inclus dans `SCRF030.PRG`
-et relogés au lancement) redessine la scène à partir de l'état du jeu, port du mode HD de
-`native/` : géométrie des 8 circuits décodée dans le programme du jeu (port de `$48390`),
-caméra `$10AC2` (œil, focale 259 × 2, centre 153,2 / 82,3, rapport 0,895), adversaire
-(`$10907`, `$108F6`, `$109D6`, boîtes orientées selon la route), sol, collines, route en
-triangles, lignes de bord, flancs. Peintre (cases de profondeur de 64 unités, dessinées dans
-l'ordre d'ajout), découpage au plan proche puis en 2D, remplissage par lignes dans un tampon
-d'octets de la fenêtre 3D seule (512 × 256), textures 16 × 16 à deux couleurs en
-perspective (une division par groupe de 16 pixels). Sortie : écran 640 × 480 en 16 couleurs
-(4 plans, palette du VIDEL `$FF9800` remplie à chaque VBL depuis la palette de course du jeu
-`$6EA3C`), 400 lignes utiles ; la fenêtre est convertie en plans par table, le cockpit hors
-fenêtre recopié du jeu en plans directement (bits et lignes doublés).
-
-Côté jeu, en mode HD :
-
-| Modification | Pourquoi |
-|---|---|
-| `$10824` : `move.l $56C74,d3` → `move.l #brouillon,d3` | la fenêtre 3D `$56C78` (= d3 + `$A10`) pointe dans un écran brouillon : le décor du jeu y est dessiné, invisible. Neutraliser les remplissages ne marche pas : ils remettent à zéro les listes de bords que le tracé des bords (`$5353C`) fait avancer, qui écrasaient alors le jeu |
-| `$5313E` : `rts` | le tracé de pixel (lignes du décor) écrit dans `$56C74`, l'écran de travail : supprimé (sans effet de bord ; moteur fidèle : même partie) |
-| après chaque échange, fenêtre de l'écran de travail en couleur 1 | la couleur 1 (route) n'est jamais employée par le cockpit (moteur fidèle : histogramme des couleurs de la fenêtre, décor supprimé) : elle marque la scène, le reste est incrusté |
-| `$1083E`, `$10846` : `nop` | le jeu n'écrit plus l'adresse d'écran ; on affiche nos deux écrans HD |
-
-L'image HD est calculée dans le tour (à la place de l'attente), à partir de l'écran affiché du
-jeu (`$56C70`, image précédente, roues dessinées par la VBL comprises). Tour déjà débordé :
-image sautée (au plus 3 de suite). Plus de tour pendant une seconde (menus) : retour au mode
-du jeu. Registres du VIDEL des deux modes relevés au lancement (`Setscreen` du TOS).
+`SCRF030.PRG` (Falcon030) et `SCRCT60.PRG` (Falcon à 68060 : même source, `-DCT60=1` ;
+titre et fichier d'options `SCRCT60.INF` à lui). Les deux démarrent en jeu fluide (niveau le
+plus haut permis : x2, x3 avec l'option `3`, x6 sur 68040/68060 ou avec l'option `6`) ; F1
+bascule vers le jeu d'origine et retour. Un mode HD (F2, scène redessinée en 640×480 par un
+moteur en C, cockpit incrusté) et un mode texturé (F3) ont été essayés le 14/10 puis retirés
+le 15/10 : trop lents, même sur une vraie CT60 (et le 68LC060 n'a pas de FPU).
 
 Au passage : le second chargeur du jeu recopie sa routine de relogement en
 `Physbase - $7D00` (sur un ST, sous l'écran en haut de la RAM) ; le lanceur place donc
@@ -165,11 +138,6 @@ code déjà exécuté, 8 circuits). Sur 68030, le cache d'instructions de 256 oc
 ligne par ligne (`t_color`) ; sur 68060, `CPUSHL` ne suffisait pas : bordure d'une seule
 couleur, qui clignotait. Sur 68040/68060, `$5313E` est remplacé par `t_pixel`, qui lit la
 couleur notée par `t_color` (mêmes écritures, même d0, même Z).
-
-Sous Hatari (68060 à 128 MHz modifié, VGA) : F2 et F3 s'affichent, F2 revient au jeu. Le 68060
-de Hatari est très lent : environ 30 VBL par image HD, 50 en texturé. Profil : découpage et
-projection 48 %, remplissage 26 % (70 % en texturé). La vitesse sur une vraie CT60 n'a pas pu
-être mesurée.
 
 ### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
 

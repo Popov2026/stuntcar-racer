@@ -9,17 +9,14 @@ bin/SCRF030.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -o $@ $<
 
-# Falcon à 68060 (CT60, CT63) : modes HD F2/F3 (moteur hd/hd.bin)
-bin/SCRCT60.PRG: src/scrf030.s src/snaptab.s src/turbo.s hd/hd.bin hd/hdrel.s
+# Falcon à 68060 (CT60, CT63)
+bin/SCRCT60.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -DCT60=1 -o $@ $<
 
 bin/F030AUTO.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -DAUTO=1 -o $@ $<
-
-# moteur HD (F2/F3) : hd/hd.bin et hd/hdrel.s sont fournis ; pour les refaire (gcc m68k-elf) :
-#   make -C falcon/hd CROSS=m68k-elf-
 
 # doublure de GAME.PUT pour les tests sous Hatari (aucune donnée du jeu)
 test/build/GAME.PUT: test/standin.s
