@@ -3,11 +3,16 @@
 VASM   ?= vasmm68k_mot
 VFLAGS  = -Ftos -m68030 -devpac -nosym -quiet
 
-all: bin/SCRF030.PRG bin/F030AUTO.PRG test/build/GAME.PUT test/build/DEBUT.PRG
+all: bin/SCRF030.PRG bin/SCRCT60.PRG bin/F030AUTO.PRG test/build/GAME.PUT test/build/DEBUT.PRG
 
-bin/SCRF030.PRG: src/scrf030.s src/snaptab.s src/turbo.s hd/hd.bin hd/hdrel.s
+bin/SCRF030.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -o $@ $<
+
+# Falcon à 68060 (CT60, CT63) : modes HD F2/F3 (moteur hd/hd.bin)
+bin/SCRCT60.PRG: src/scrf030.s src/snaptab.s src/turbo.s hd/hd.bin hd/hdrel.s
+	@mkdir -p bin
+	$(VASM) $(VFLAGS) -DCT60=1 -o $@ $<
 
 bin/F030AUTO.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	@mkdir -p bin

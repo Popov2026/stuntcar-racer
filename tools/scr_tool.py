@@ -483,6 +483,11 @@ FALCON_INF = (b'\r\n'
               b';   8 = 8 MHz et bus STE    C = caches du 68030 laisses    N = pas de correction 60 Hz\r\n')
 
 
+CT60_INF = (b'\r\n'
+            b'; SCRCT60.INF - options de SCRCT60.PRG (Falcon CT60/CT63) sur la PREMIERE ligne\r\n'
+            b';   3 = F1 en x3    K = caches coupes    N = pas de correction 60 Hz\r\n')
+
+
 def falcon_bin(name):
     import os
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'falcon', 'bin', name)
@@ -504,6 +509,7 @@ def falcon_kit(img, outdir):
         print('attention : GAME.PUT n\'est pas la version étudiée (docs/RETRO_INGENIERIE.md) ;'
               ' la version Falcon est préparée quand même')
     launcher, auto = falcon_bin('SCRF030.PRG'), falcon_bin('F030AUTO.PRG')
+    ct60 = falcon_bin('SCRCT60.PRG')
     game_key = next(k for k in files if k.upper().endswith('GAME.PUT'))
 
     # 1. dossier pour disque dur : le jeu + le lanceur
@@ -516,6 +522,10 @@ def falcon_kit(img, outdir):
     # même programme en .TOS (sans GEM) : « hatari SCR/SCRF030.TOS » le lance directement
     open(os.path.join(hd, 'SCRF030.TOS'), 'wb').write(launcher)
     open(os.path.join(hd, 'SCRF030.INF'), 'wb').write(FALCON_INF)
+    # Falcon à 68060 (CT60, CT63) : lanceur à part, modes HD (F2/F3)
+    open(os.path.join(hd, 'SCRCT60.PRG'), 'wb').write(ct60)
+    open(os.path.join(hd, 'SCRCT60.TOS'), 'wb').write(ct60)
+    open(os.path.join(hd, 'SCRCT60.INF'), 'wb').write(CT60_INF)
 
     # 2. disquette : tout le contenu d'origine, F030AUTO.PRG en tête du dossier AUTO
     #    (exécuté avant le menu DEBUT.PRG), SCRF030.PRG à la racine, BPB standard
@@ -525,7 +535,7 @@ def falcon_kit(img, outdir):
     st, spt = fat12_best_fit(ordered)
     stpath = os.path.join(outdir, 'SCR_F030.ST')
     open(stpath, 'wb').write(st)
-    print('disque dur :', hd, '(lancer SCRF030.PRG ou SCRF030.TOS)')
+    print('disque dur :', hd, '(Falcon030 : SCRF030.PRG ou .TOS ; CT60 : SCRCT60.PRG ou .TOS)')
     print('disquette  :', stpath, '(%d secteurs/piste ; démarrer dessus)' % spt)
 
 # --------------------------------------------------------------------------- CLI

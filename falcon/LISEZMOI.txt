@@ -11,7 +11,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
 
   produit :
     falcon_out/SCR/          pour le disque dur : GAME.PUT, HIGHSCOR.ES, SCRF030.PRG (aussi
-                             nommé SCRF030.TOS), SCRF030.INF
+                             nommé SCRF030.TOS), SCRF030.INF ; pour CT60 : SCRCT60.PRG
+                             (.TOS), SCRCT60.INF
     falcon_out/SCR_F030.ST   disquette Falcon : tout le contenu de la disquette d'origine,
                              AUTO\F030AUTO.PRG placé avant le menu AUTO\DEBUT.PRG,
                              SCRF030.PRG à la racine, secteur de démarrage (BPB) standard
@@ -82,8 +83,11 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   (l'image tressaute), et le jeu dessine certaines choses (roues avant, tableau de bord)
   dans l'écran affiché, qui manquent alors sur ces images. Préférez F1.
 
-  Falcon à 68060 (CT60, CT63) ou 68040, en VGA ou RVB : le même SCRF030.PRG reconnaît le
-  processeur. Il gère l'adressage 32 bits et la TT-RAM (le jeu et l'écran restent en
+  DEUX LANCEURS :
+    SCRF030.PRG   Falcon030 (d'origine ou accéléré) ;
+    SCRCT60.PRG   Falcon à 68060 (CT60, CT63) ou 68040 : tout ce qui suit, plus les modes
+                  HD (F2) et texturé (F3). Options dans SCRCT60.INF.
+  Sur une carte 68060, SCRCT60.PRG gère l'adressage 32 bits et la TT-RAM (le jeu et l'écran restent en
   ST-RAM), et les caches du 68040/68060 (vidés avec CPUSHA/CPUSHL quand du code est
   modifié). Le jeu démarre en logique x6 : un tour par VBL, 50 vraies images/s, et un
   niveau de moins (x3, puis x2) dès qu'un tour déborde. On remonte quand 8 tours de suite
@@ -92,9 +96,14 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   de course sont à une VBL. La gestion des caches du 68060 n'a pas pu être essayée sur une
   vraie carte (Hatari ne les émule pas) : en cas de souci, essayer l'option K (caches
   coupés, plus lent).
-  Sur CT60, lancer SCRF030.PRG depuis le disque dur : depuis la disquette, c'est le menu
-  du jeu qui charge GAME.PUT (F030AUTO.PRG ne peut pas corriger son chargeur), ce qui
-  suppose l'adressage 24 bits.
+  Sur CT60, lancer SCRCT60.PRG depuis le disque dur : depuis la disquette, c'est le menu
+  du jeu qui charge GAME.PUT (F030AUTO.PRG ne peut pas corriger son chargeur, et n'a pas les
+  modes HD), ce qui suppose l'adressage 24 bits.
+
+  Au lancement, SCRCT60.PRG affiche si F2/F3 sont disponibles, sinon pourquoi (processeur,
+  FPU, moniteur VGA, mémoire), et écrit SCRCT60.LOG dans son dossier : processeur, FPU
+  (cookie et essai), moniteur, état du mode HD, adresses, registres du VIDEL des deux modes.
+  À envoyer en cas de problème.
 
   Falcon à 68060/68040 avec FPU, moniteur VGA : deux modes de plus.
     F2   MODE HD : la scène 3D est redessinée en 640x400 (écran 640x480, 16 couleurs, la

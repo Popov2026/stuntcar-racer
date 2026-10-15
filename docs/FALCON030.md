@@ -121,6 +121,12 @@ vraie CT60.
 
 ### Mode HD (F2) et mode texturé (F3) : Falcon à 68060/68040 avec FPU, VGA
 
+Lanceur à part : `SCRCT60.PRG` (même source, `-DCT60=1`) ; `SCRF030.PRG` n'a pas les modes
+HD. Conditions, vérifiées au lancement et affichées : 68040/68060 (`_CPU`), FPU essayée
+(`fnop` sous un vecteur « ligne F » provisoire, le cookie `_FPU` n'étant pas fiable), moniteur
+VGA, 1,1 Mo (TT-RAM de préférence) + 32 Ko + 300 Ko de ST-RAM. `SCRCT60.LOG` (écrit au
+lancement) : cookies, essai de la FPU, moniteur, raison d'un refus, registres du VIDEL.
+
 `falcon/hd/hd.c` (C sans bibliothèque, `m68k-elf-gcc -m68060`, lié en 0 par `hd.ld`, binaire
 `hd.bin` et table de relogement `hdrel.s` produits par `mkblob.py`, inclus dans `SCRF030.PRG`
 et relogés au lancement) redessine la scène à partir de l'état du jeu, port du mode HD de

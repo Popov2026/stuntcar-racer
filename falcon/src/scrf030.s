@@ -68,6 +68,13 @@
 	ifnd	AUTO
 AUTO	equ	0
 	endc
+	ifnd	CT60
+CT60	equ	0				; 1 : SCRCT60.PRG (Falcon à 68060, modes HD)
+	endc
+HDON	set	CT60				; modes HD (F2/F3) : SCRCT60.PRG seulement
+	ifne	AUTO
+HDON	set	0
+	endc
 
 ; instructions de cache des 68040/68060 (assemblage en -m68030)
 CPUSHA_BC	macro
@@ -181,13 +188,13 @@ start:	move.l	4(sp),a5			; basepage
 	bra	quit
 
 .colour:
-	ifeq	AUTO
+	ifne	HDON
 	bsr	hd_setup			; F2 / F3 : 68040/68060 avec FPU, en VGA
 	endc
 	bsr	set_video
 	tst.l	d0
 	bmi	.novideo
-	ifeq	AUTO
+	ifne	HDON
 	tst.w	hd_avail			; registres du VIDEL en ST basse
 	beq.s	.nohd
 	move.l	#st_vregs,vsave_ptr
@@ -227,6 +234,9 @@ start:	move.l	4(sp),a5			; basepage
 	move.w	#$31,-(sp)			; Ptermres
 	trap	#1
 	else
+	ifne	HDON
+	bsr	write_log			; SCRCT60.LOG : état au lancement
+	endc
 	bsr	run_game
 
 	pea	hw_restore(pc)
@@ -236,6 +246,9 @@ start:	move.l	4(sp),a5			; basepage
 	bsr	sound_restore
 	bsr	restore_video
 	bsr	report_exec
+	ifne	HDON
+	bsr	write_log
+	endc
 	bra	quit
 	endc
 
@@ -406,16 +419,33 @@ read_cookies:
 ; adressage 24 bits ? Le chargeur JEK de GAME.PUT écrit la palette en $0FFF8240, qui
 ; n'est $FF8240 que si les 8 bits forts de l'adresse sont ignorés (Falcon d'origine,
 ; Hatari par défaut). En 32 bits (TT-RAM, cartes accélératrices) : erreur de bus.
-	clr.w	addr32
-	move.l	$8.w,a1
+	sub.l	a3,a3				; table des vecteurs (VBR sur 68010 et plus)
+	tst.l	cpu_cookie
+	beq.s	.v0
+	movec	vbr,a3
+.v0:	clr.w	addr32
+	move.l	$8(a3),a1
 	move.l	sp,a2
-	move.l	#.berr,$8.w
+	move.l	#.berr,$8(a3)
 	tst.w	$0fff8240
 	bra.s	.a24
 .berr:	move.l	a2,sp				; cadre d'exception abandonné
 	move.w	#1,addr32
-.a24:	move.l	a1,$8.w
-	rts
+.a24:	move.l	a1,$8(a3)
+; FPU : essayée (fnop) plutôt que lue dans le cookie _FPU, absent ou incomplet selon le TOS
+; (68LC060 sans FPU : exception « ligne F »)
+	clr.w	fpu_ok
+	cmp.l	#20,cpu_cookie
+	blo.s	.nofpu
+	move.l	$2c(a3),a1
+	move.l	sp,a2
+	move.l	#.linef,$2c(a3)
+	dc.w	$f280,$0000			; fnop
+	move.w	#1,fpu_ok
+	bra.s	.fpd
+.linef:	move.l	a2,sp
+.fpd:	move.l	a1,$2c(a3)
+.nofpu:	rts
 
 ; ---------------------------------------------------------------------------
 ; mode ST basse sur notre écran ; d0 < 0 en cas d'échec
@@ -698,10 +728,13 @@ hw_restore:
 	beq.s	.done
 	move.w	sr,-(sp)
 	or.w	#$0700,sr
+	ifne	HDON
 	tst.w	hd_on
 	beq.s	.nohd
 	bsr	hd_leave
-.nohd:	clr.w	icache_on
+.nohd:
+	endc
+	clr.w	icache_on
 	clr.w	interp_on
 	clr.w	game_ok
 	move.b	old_byte_ff,$ff.w
@@ -736,7 +769,7 @@ vbl_hook:
 .ready:	tst.w	game_ok
 	beq.s	.nokj
 	bsr	kbd_joy
-	ifeq	AUTO
+	ifne	HDON
 	tst.w	hd_on
 	beq.s	.nokj
 	bsr	hd_vbl
@@ -803,7 +836,7 @@ kbd_joy:
 	bra.s	.k6
 .f1on:	move.b	dbl_max,dbl_req
 .k6:
-	ifeq	AUTO
+	ifne	HDON
 	tst.w	hd_avail
 	beq.s	.k8
 	cmp.b	#$b3,$3c(a0)			; F2 : mode HD, F3 : mode texturé (bascules)
@@ -1231,7 +1264,7 @@ tick_hook:
 	move.w	d3,chr_rem
 	bsr	flush_ic
 .nc:
-	ifeq	AUTO
+	ifne	HDON
 	tst.w	hd_avail
 	beq.s	.nhd
 	bsr	hd_tick
@@ -1734,19 +1767,23 @@ priv_violation:
 ; avant chaque tour, et l'écran affiché est le nôtre ($10824 n'écrit plus $FFFF8201/03) :
 ; 640x480 en 16 couleurs, dont 400 lignes dessinées par le moteur HD (falcon/hd/hd.c, C
 ; compilé pour 68060, relogé ici) à partir de l'état du jeu, cockpit du jeu incrusté.
-	ifeq	AUTO
+	ifne	HDON
 HDMODE		equ	VGA|8|BPS4		; 640x480, 16 couleurs (COL80)
 HD_SCRBYTES	equ	640*480/2
 HD_WSBYTES	equ	1100000			; >= sizeof(struct hdws)
 
 hd_setup:
 	clr.w	hd_avail
+	move.w	#1,hd_why			; 1 : processeur avant 68040
 	cmp.l	#40,cpu_cookie
 	blo	.no
-	tst.w	fpu_cookie			; type de FPU (mot fort) : 0 = aucune
+	move.w	#2,hd_why			; 2 : pas de FPU
+	tst.w	fpu_ok
 	beq	.no
+	move.w	#3,hd_why			; 3 : moniteur autre que VGA
 	cmp.w	#2,montype
 	bne	.no
+	move.w	#4,hd_why			; 4 : mémoire (espace de travail)
 	move.w	#3,-(sp)			; TT-RAM de préférence
 	move.l	#HD_WSBYTES,-(sp)
 	move.w	#$44,-(sp)			; Mxalloc
@@ -1755,6 +1792,7 @@ hd_setup:
 	tst.l	d0
 	ble	.no
 	move.l	d0,hd_ws
+	move.w	#5,hd_why			; 5 : mémoire (brouillon)
 	move.w	#3,-(sp)			; brouillon du décor du jeu
 	move.l	#32768,-(sp)
 	move.w	#$44,-(sp)
@@ -1763,6 +1801,7 @@ hd_setup:
 	tst.l	d0
 	ble	.no
 	move.l	d0,hd_scratch
+	move.w	#6,hd_why			; 6 : ST-RAM (écrans HD)
 	clr.w	-(sp)				; écrans : ST-RAM
 	move.l	#2*HD_SCRBYTES+256,-(sp)
 	move.w	#$44,-(sp)
@@ -1830,7 +1869,31 @@ hd_setup:
 	trap	#14
 	lea	14(sp),sp
 	move.w	#1,hd_avail
-.no:	rts
+	clr.w	hd_why
+.no:	lea	txt_hdok(pc),a0			; état affiché au lancement
+	tst.w	hd_avail
+	bne.s	.pr
+	move.w	hd_why,d0
+	lea	txt_hdwhy(pc),a0
+.wl:	subq.w	#1,d0
+	beq.s	.pr1
+.ws:	tst.b	(a0)+
+	bne.s	.ws
+	bra.s	.wl
+.pr1:	move.l	a0,-(sp)
+	lea	txt_hdno(pc),a0
+	bsr	print
+	move.l	(sp)+,a0
+	bsr	print
+	lea	txt_crlf(pc),a0
+	bsr	print
+	moveq	#100-1,d3			; 2 s pour lire
+.wt:	move.w	#37,-(sp)
+	trap	#14
+	addq.l	#2,sp
+	dbf	d3,.wt
+	rts
+.pr:	bra	print
 
 ; registres du VIDEL -> (vsave_ptr)
 videl_save:
@@ -1914,6 +1977,8 @@ hd_enter:
 	move.l	d0,-(sp)
 	bsr	hd_call0
 	addq.l	#8,sp
+	move.l	d0,hd_initret
+	move.w	#10,hd_why			; 10 : moteur HD (version du jeu ?)
 	tst.l	d0
 	bne	.fail
 	move.w	#1,hd_inited
@@ -1923,6 +1988,8 @@ hd_enter:
 .v:	move.l	(a1),d0
 	move.w	6(a1),d1
 	beq.s	.vn
+	move.w	#20+HD_NPATCH-1,hd_why		; 20+n : modification n du jeu refusée
+	sub.w	d3,hd_why
 	cmp.w	(a6,d0.l),d1
 	bne	.fail
 .vn:	lea	14(a1),a1
@@ -1954,6 +2021,8 @@ hd_enter:
 	move.l	hd_scr,d0
 	bsr	set_vbase
 	move.w	#1,hd_on
+	addq.w	#1,hd_enters
+	clr.w	hd_why
 	clr.w	hd_idle
 	move.w	(sp)+,sr
 	moveq	#0,d0
@@ -2076,6 +2145,7 @@ hd_tick:
 	move.w	#1,hd_busy
 	bsr	hd_call1
 	clr.w	hd_busy
+	addq.l	#1,hd_frames
 	lea	12(sp),sp
 	bsr	flush_ic			; cache de données écrit en ST-RAM (VIDEL)
 	move.w	hd_cur,d0
@@ -2123,6 +2193,106 @@ hd_call:
 	move.l	4(a1),-(sp)
 	jsr	(a0)
 	move.l	hd_sp,sp
+	rts
+
+; journal SCRCT60.LOG (au retour du jeu) : machine, état du mode HD, registres du VIDEL
+write_log:
+	lea	log_buf,a1
+	lea	log_t1(pc),a0
+	move.l	cpu_cookie,d0
+	bsr	.lx
+	lea	log_t2(pc),a0
+	move.l	fpu_cookie,d0
+	bsr	.lx
+	lea	log_t3(pc),a0
+	moveq	#0,d0
+	move.w	fpu_ok,d0
+	bsr	.lx
+	lea	log_t4(pc),a0
+	move.w	montype,d0
+	bsr	.lx
+	lea	log_t5(pc),a0
+	move.w	hd_avail,d0
+	bsr	.lx
+	lea	log_t6(pc),a0
+	move.w	hd_why,d0
+	bsr	.lx
+	lea	log_t7(pc),a0
+	move.l	hd_initret,d0
+	bsr	.lx
+	lea	log_t8(pc),a0
+	moveq	#0,d0
+	move.w	hd_enters,d0
+	bsr	.lx
+	lea	log_t9(pc),a0
+	move.l	hd_frames,d0
+	bsr	.lx
+	lea	log_t10(pc),a0
+	move.l	hd_ws,d0
+	bsr	.lx
+	lea	log_t11(pc),a0
+	move.l	hd_scr,d0
+	bsr	.lx
+	lea	log_t14(pc),a0
+	move.l	game_base,d0
+	bsr	.lx
+	lea	log_t12(pc),a0
+	lea	hd_vregs,a2
+	bsr	.regs
+	lea	log_t13(pc),a0
+	lea	st_vregs,a2
+	bsr	.regs
+	lea	log_t15(pc),a0
+	bsr	.str
+	move.l	a1,d4
+	sub.l	#log_buf,d4
+	clr.w	-(sp)
+	pea	log_name(pc)
+	move.w	#$3c,-(sp)			; Fcreate
+	trap	#1
+	addq.l	#8,sp
+	tst.l	d0
+	bmi.s	.out
+	move.w	d0,d3
+	pea	log_buf
+	move.l	d4,-(sp)
+	move.w	d3,-(sp)
+	move.w	#$40,-(sp)			; Fwrite
+	trap	#1
+	lea	12(sp),sp
+	move.w	d3,-(sp)
+	move.w	#$3e,-(sp)			; Fclose
+	trap	#1
+	addq.l	#4,sp
+.out:	rts
+.regs:	bsr	.str				; 21 mots
+	moveq	#21-1,d2
+.rg:	move.w	(a2)+,d0
+	moveq	#4-1,d1
+	bsr	.hex
+	move.b	#' ',(a1)+
+	dbf	d2,.rg
+	rts
+.lx:	bsr	.str				; texte (a0) puis d0 en hexadécimal (8 chiffres)
+	moveq	#8-1,d1
+.hex:	movem.l	d0/d2,-(sp)			; d0 : valeur, d1 : chiffres - 1
+	move.w	d1,d2
+	addq.w	#1,d2
+	lsl.w	#2,d2
+	neg.w	d2
+	add.w	#32,d2
+	lsl.l	d2,d0
+.h:	rol.l	#4,d0
+	move.w	d0,d2
+	and.w	#15,d2
+	move.b	.dig(pc,d2.w),(a1)+
+	dbf	d1,.h
+	movem.l	(sp)+,d0/d2
+	rts
+.dig:	dc.b	"0123456789ABCDEF"
+.str:	move.b	(a0)+,(a1)+
+	bne.s	.str
+	subq.l	#1,a1
 	rts
 
 	section	hdblob,data
@@ -2208,13 +2378,22 @@ wait_key:
 
 txt_banner:
 	dc.b	27,"E"
+	ifne	CT60
+	dc.b	"Stunt Car Racer - Falcon CT60 (68060)",13,10
+	dc.b	"F1: fluide  F2: mode HD  F3: texture",13,10
+	elseif
 	dc.b	"Stunt Car Racer - Falcon030",13,10
+	endc
 	ifne	AUTO
 	dc.b	"(dossier AUTO)",13,10
 	endc
 	dc.b	"Shift: 8 MHz  Control: caches",13,10
 	dc.b	"Alternate: pas de correction 60 Hz",13,10
+	ifne	CT60
+	dc.b	"(O dans SCRCT60.INF : jeu d'origine)",13,10,0
+	elseif
 	dc.b	"(O dans SCRF030.INF : jeu d'origine)",13,10,0
+	endc
 txt_opts:
 	dc.b	"Options :",0
 txt_o8:	dc.b	" 8MHz",0
@@ -2225,6 +2404,36 @@ txt_ot:	dc.b	" sans-turbo",0
 txt_of:	dc.b	" fluide",0
 txt_crlf:
 	dc.b	13,10,0
+	ifne	HDON
+txt_hdok:
+	dc.b	"F2/F3 (HD, texture) : disponibles",13,10,0
+txt_hdno:
+	dc.b	"F2/F3 indisponibles : ",0
+txt_hdwhy:
+	dc.b	"il faut un 68040 ou 68060",0
+	dc.b	"pas de FPU",0
+	dc.b	"moniteur VGA necessaire",0
+	dc.b	"memoire insuffisante (1,1 Mo)",0
+	dc.b	"memoire insuffisante (32 Ko)",0
+	dc.b	"ST-RAM insuffisante (300 Ko)",0
+log_name:
+	dc.b	"SCRCT60.LOG",0
+log_t1:	dc.b	"SCRCT60 - journal (a envoyer en cas de probleme)",13,10,"_CPU ",0
+log_t2:	dc.b	13,10,"_FPU ",0
+log_t3:	dc.b	13,10,"FPU essayee ",0
+log_t4:	dc.b	13,10,"moniteur ",0
+log_t5:	dc.b	13,10,"HD disponible ",0
+log_t6:	dc.b	13,10,"raison ",0
+log_t7:	dc.b	13,10,"moteur HD (init) ",0
+log_t8:	dc.b	13,10,"passages en HD ",0
+log_t9:	dc.b	13,10,"images HD ",0
+log_t10: dc.b	13,10,"travail ",0
+log_t11: dc.b	13,10,"ecrans ",0
+log_t12: dc.b	13,10,"VIDEL HD ",0
+log_t13: dc.b	13,10,"VIDEL ST ",0
+log_t14: dc.b	13,10,"jeu (base) ",0
+log_t15: dc.b	13,10,0
+	endc
 txt_notfalcon:
 	dc.b	"Pas de VIDEL : lancement direct.",13,10,0
 txt_mono:
@@ -2245,7 +2454,11 @@ null_env:
 	dc.b	0,0
 	endc
 inf_name:
+	ifne	CT60
+	dc.b	"SCRCT60.INF",0
+	elseif
 	dc.b	"SCRF030.INF",0
+	endc
 	even
 vbl_phase:
 	dc.w	6
@@ -2272,6 +2485,11 @@ montype:	ds.w	1
 snd_cookie:	ds.l	1
 cpu_cookie:	ds.l	1
 fpu_cookie:	ds.l	1
+fpu_ok:		ds.w	1
+hd_why:		ds.w	1			; mode HD indisponible : raison (journal)
+hd_initret:	ds.l	1
+hd_frames:	ds.l	1
+hd_enters:	ds.w	1
 old_mode:	ds.w	1
 new_mode:	ds.w	1
 old_phys:	ds.l	1
@@ -2402,9 +2620,10 @@ vectab:		ds.l	256			; nouvelle table (VBR), alignée sur 4
 relays:		ds.w	3*256
 		ds.l	512
 stack_top:	ds.l	1
-	ifeq	AUTO
+	ifne	HDON
 		ds.l	4096			; pile du moteur HD (C)
 hd_stack:	ds.l	1
+log_buf:	ds.b	1024
 	endc
 ; sous l'écran, au moins 32000 octets sans rien d'utile au chargement : le second chargeur
 ; du jeu y recopie sa routine de relogement (Physbase - $7D00, haut de la RAM sur un ST)
