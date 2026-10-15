@@ -168,11 +168,19 @@ contre le client PC v45) :
   appelées depuis le C gardent d2/a2 (sinon la trame `HELLO` partait tronquée).
 * Le maître inonde de `$80` tant que le jeu de l'esclave n'est pas au Computer Link : le
   tampon de réception (4 Ko) perd alors les plus anciens octets au lieu d'échouer.
+* **Réentrance** : la VBL relève le réseau (PONG pendant l'intro et le chargement, où le jeu
+  attend dans le TOS). Le transport série appelle donc le pilote AUX par les tables du TOS
+  (`xconstat` `$51E`, `xconin` `$53E`, `xcostat` `$55E`, `xconout` `$57E`, entrée 1) et non par
+  `trap #13` : appeler le répartiteur du BIOS depuis la VBL pendant un appel du jeu coupait une
+  trame puis figeait la machine.
+* Le jeu règle le port à 9600 bauds avant le Computer Link (`$4483E`, `Rsconf`) : en ligne,
+  `trap #14` est détourné et ce `Rsconf` ignoré.
 * EmuTOS compilée ici par gcc 16 (LTO) : l'interruption de réception du SCC détruisait d2 du
   code interrompu (panique « Bus Error » dans le curseur) ; corrigé dans la ROM d'essai en
   sauvant d2/a2 dans `bios/vectors.S`. Rien à voir avec le lanceur ; TOS 4.04 n'est pas concerné.
 
-Non essayé : le chemin STinG (pas de carte réseau dans Hatari).
+Essayé jusqu'aux menus menés par le PC (saisie des pilotes), liaison tenue toute la session ;
+pas de course menée en automatique. Non essayé : le chemin STinG (pas de carte réseau dans Hatari).
 
 ### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
 

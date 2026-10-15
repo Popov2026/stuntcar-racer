@@ -210,8 +210,12 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   test sans octet attend 0,7 ms (timer C du MFP) pour retrouver ce délai.
 
   Essais : sous Hatari (port série SCC du Falcon relié au relais par un pont TCP), contre
-  la version PC v45 : inscription, appariement, poignée de main, « Link complete », menus
-  menés par le PC. Le chemin STinG (carte réseau) n'a pas pu être essayé (Hatari n'émule
-  pas de carte réseau). Avec une EmuTOS compilée par gcc 16 (LTO), l'interruption du port
-  série détruisait le registre d2 du code interrompu ; TOS 4.04 n'est pas concerné.
+  la version PC v45 : inscription, appariement, poignée de main, « Link complete », puis
+  menus menés par le PC (saisie des pilotes) pendant que le Falcon affiche « Please wait »,
+  la liaison tenant toute la session (PING/PONG). Une course complète n'a pas été menée
+  jusqu'au bout en automatique (saisie du PC difficile à scripter), mais la course passe par
+  la même routine d'échange que les menus. Le chemin STinG (carte réseau) n'a pas pu être
+  essayé : Hatari n'émule pas de carte réseau.
 
+  Sous MiNT (GlueSTiK), le réseau est relevé aussi depuis la VBL : si cela pose problème,
+  le transport série reste possible.
