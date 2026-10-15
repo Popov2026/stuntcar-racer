@@ -655,6 +655,7 @@ hw_install:
 	tst.w	net_on
 	beq.s	.nonet
 	move.l	#net_trap13,vectab+$b4		; BIOS : câble du jeu vers le relais
+	move.l	#net_trap14,vectab+$b8		; XBIOS : Rsconf du jeu ignoré
 .nonet:
 	endc
 	clr.w	div60

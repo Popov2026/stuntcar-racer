@@ -253,42 +253,42 @@ sting_close:
 	rts
 
 ; --------------------------------------------------------------- transport : port série
-; BIOS, périphérique 1 : trap #13 marqué « interne » (net_inside), que notre détournement
-; laisse passer au TOS
-bios	macro					; fonction \1 (arguments déjà empilés, sauf la fonction)
-	move.w	#\1,-(sp)
-	addq.w	#1,net_inside
-	trap	#13
-	subq.w	#1,net_inside
+; pilote du périphérique 1 (AUX) appelé directement par les tables du TOS (xconstat $51E,
+; xconin $53E, xcostat $55E, xconout $57E ; entrée 1, celle que Bconmap tient à jour) : pas de
+; trap #13, donc pas de réentrance dans le répartiteur du BIOS quand la VBL relève le réseau
+; pendant un appel du jeu au TOS. Superviseur ; le pilote peut détruire d0-d2/a0-a2.
+aux	macro					; table \1 : (périphérique, [octet]) déjà empilés
+	move.l	\1+4.w,a0
+	jsr	(a0)
 	endm
 se_send:					; (p, n) : envoie tout ce que le port accepte
-	movem.l	d2-d4/a2-a3,-(sp)		; le TOS peut détruire d0-d2/a0-a2
+	movem.l	d2-d4/a2-a3,-(sp)
 	move.l	20+4(sp),a3
 	move.l	20+8(sp),d4
 	moveq	#0,d3
 .l:	cmp.l	d4,d3
 	bhs.s	.out
-	move.w	#1,-(sp)			; Bcostat(1)
-	bios	8
-	addq.l	#4,sp
+	move.w	#1,-(sp)
+	aux	$55e				; Bcostat(1)
+	addq.l	#2,sp
 	tst.w	d0
 	beq	.out
 	moveq	#0,d0
 	move.b	(a3,d3.l),d0
-	move.w	d0,-(sp)			; Bconout(1, octet)
+	move.w	d0,-(sp)
 	move.w	#1,-(sp)
-	bios	3
-	addq.l	#6,sp
+	aux	$57e				; Bconout(1, octet)
+	addq.l	#4,sp
 	addq.l	#1,d3
 	bra.s	.l
 .out:	move.l	d3,d0
 	movem.l	(sp)+,d2-d4/a2-a3
 	rts
 se_avail:
-	movem.l	d2/a2,-(sp)			; le TOS peut détruire d0-d2/a0-a2
-	move.w	#1,-(sp)			; Bconstat(1) : -1 si un octet attend
-	bios	1
-	addq.l	#4,sp
+	movem.l	d2/a2,-(sp)
+	move.w	#1,-(sp)
+	aux	$51e				; Bconstat(1) : -1 si un octet attend
+	addq.l	#2,sp
 	ext.l	d0
 	neg.l	d0
 	movem.l	(sp)+,d2/a2
@@ -301,13 +301,13 @@ se_get:						; (p, n) : ce qui est déjà arrivé
 .l:	cmp.l	d4,d3
 	bhs.s	.out
 	move.w	#1,-(sp)
-	bios	1
-	addq.l	#4,sp
+	aux	$51e				; Bconstat(1)
+	addq.l	#2,sp
 	tst.w	d0
 	beq.s	.out
-	move.w	#1,-(sp)			; Bconin(1)
-	bios	2
-	addq.l	#4,sp
+	move.w	#1,-(sp)
+	aux	$53e				; Bconin(1)
+	addq.l	#2,sp
 	move.b	d0,(a3,d3.l)
 	addq.l	#1,d3
 	bra.s	.l
@@ -548,6 +548,7 @@ net_connect:
 	dbf	d2,.hx
 	rts
 .sup:	move.l	$b4.w,bios_vec
+	move.l	$b8.w,xbios_vec
 	bsr	sting_find
 	rts
 .start:	pea	net_state
@@ -648,8 +649,6 @@ net_close:
 ; --------------------------------------------------------------- pendant le jeu
 ; trap #13 (BIOS) : périphérique 1 (câble du jeu) vers le réseau, le reste au TOS
 net_trap13:
-	tst.w	net_inside			; nos propres appels (port série) : au TOS
-	bne.s	.tos
 	tst.w	net_on
 	beq.s	.tos
 	move.l	a0,-(sp)
@@ -757,6 +756,25 @@ tc_step:
 .p:	add.w	d1,net_el
 	rts
 
+; trap #14 (XBIOS) : le jeu règle le port série à 9600 bauds avant le Computer Link ($4483E,
+; Rsconf) ; en ligne, le port (transport série) reste réglé pour le relais
+net_trap14:
+	tst.w	net_on
+	beq.s	.tos
+	move.l	a0,-(sp)
+	lea	4+8(sp),a0
+	btst	#5,4(sp)
+	bne.s	.sv
+	move.l	usp,a0
+.sv:	cmp.w	#15,(a0)			; Rsconf
+	bne.s	.tos0
+	move.l	(sp)+,a0
+	moveq	#-1,d0
+	rte
+.tos0:	move.l	(sp)+,a0
+.tos:	move.l	xbios_vec,-(sp)
+	rts
+
 ; VBL : réponses aux PING de l'adversaire même quand le jeu ne lit pas le câble (menus,
 ; chargement) ; jamais pendant un appel du jeu au câble (STinG n'est pas réentrant)
 net_vbl:
@@ -764,24 +782,12 @@ net_vbl:
 	beq.s	.out
 	tst.w	net_busy
 	bne.s	.out
-; jamais pendant un appel au TOS : le pilote du port série n'est pas réentrant (sous Hatari, une
-; trame partait coupée puis la machine se figeait). PC interrompu (cadre de vbl_hook, après notre
-; adresse de retour) dans la ROM ($E00000 à $EFFFFF) : on attend la VBL suivante
-	move.l	d0,-(sp)
-	move.l	4+4+2(sp),d0
-	cmp.l	#$e00000,d0
-	blo.s	.go
-	cmp.l	#$f00000,d0
-	blo.s	.skip
-.go:	move.l	(sp)+,d0
 	movem.l	d0-d2/a0-a1,-(sp)
 	move.w	#1,net_busy
 	NETCALL	4
 	clr.w	net_busy
 	movem.l	(sp)+,d0-d2/a0-a1
 .out:	rts
-.skip:	move.l	(sp)+,d0
-	rts
 
 	data
 txt_net1:
@@ -823,7 +829,7 @@ net_rel:	include	"../net/netrel.s"
 
 	bss
 net_on:		ds.w	1
-net_inside:	ds.w	1
+xbios_vec:	ds.l	1
 net_busy:	ds.w	1
 net_sting:	ds.w	1
 net_port:	ds.w	1
