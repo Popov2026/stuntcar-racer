@@ -10,7 +10,7 @@ bin/SCRF030.PRG: src/scrf030.s src/snaptab.s src/turbo.s
 	$(VASM) $(VFLAGS) -o $@ $<
 
 # Falcon à 68060 (CT60, CT63)
-bin/SCRCT60.PRG: src/scrf030.s src/snaptab.s src/turbo.s
+bin/SCRCT60.PRG: src/scrf030.s src/snaptab.s src/turbo.s src/online.s net/net.bin net/netrel.s
 	@mkdir -p bin
 	$(VASM) $(VFLAGS) -DCT60=1 -o $@ $<
 

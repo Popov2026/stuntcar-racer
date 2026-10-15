@@ -139,6 +139,41 @@ ligne par ligne (`t_color`) ; sur 68060, `CPUSHL` ne suffisait pas : bordure d'u
 couleur, qui clignotait. Sur 68040/68060, `$5313E` est remplacé par `t_pixel`, qui lit la
 couleur notée par `t_color` (mêmes écritures, même d0, même Z).
 
+### Multijoueur en ligne (SCRCT60, lettre `L`) : le Computer Link par le relais v45
+
+Le jeu n'accède au câble que par le BIOS, périphérique 1 (`RETRO_INGENIERIE.md` §10). Le
+lanceur CT60 détourne `trap #13` (table des vecteurs déplacée) : Bconout/Bconstat/Bconin/
+Bcostat du périphérique 1 vont au protocole de la version PC (`native/src/net.cpp`,
+`native/server/scr_relay.cpp` de la v45), écrit en C sans bibliothèque (`falcon/net/net.c`,
+gcc m68k-elf, lié en 0, relogé au lancement par `online.s`) : `JOIN2` (AUTO ou salle), `INFO`,
+`LIST`/`PICK`, `PARAMS` (seule la physique d'origine est acceptée), `HELLO` (version `v45` et
+empreinte FNV-1a du jeu relogé en `$10100`, écrite par `scr_tool.py` dans `SCRCT60.INF`),
+`DATA` (octets du câble), `PING`/`PONG` (aussi pendant le chargement et les menus, depuis la
+VBL), `BYE`. Transport : STinG (cookie `STiK`, `TCP_open`…`CNget_block`) ou flux brut sur le
+port série. L'adresse du serveur officiel est chiffrée comme dans la version PC.
+
+Points réglés en essai (Hatari, Falcon 68060, port SCC relié au relais local par un pont TCP,
+contre le client PC v45) :
+
+* **Maître / esclave** : `$453B6` vide le tampon série puis teste « octet reçu ? » en
+  `$453EC`. L'esclave réseau doit y attendre le premier octet du maître (la version PC retient
+  son jeu au même endroit) : le Bconstat détourné reconnaît cet appel à son adresse de retour
+  (`$453F2`) et seulement lui.
+* **Délais du jeu** : la réception d'un octet (`$447F0`) fait 3 tests séparés par une boucle
+  de calcul de 0,7 ms sur 68000 à 8 MHz (`$448DE`), presque nulle sur 68060 : les paquets
+  (`$12 $56 $34`, code `$E3` puis `$AA` à l'échange `$450EE`) étaient presque toujours
+  perdus et le maître restait sur « Link complete ». Un Bconstat sans octet attend désormais
+  jusqu'à 0,7 ms (compteur du timer C du MFP, 26 µs).
+* **Registres** : les appels TOS peuvent détruire d0-d2/a0-a2 ; les fonctions de transport
+  appelées depuis le C gardent d2/a2 (sinon la trame `HELLO` partait tronquée).
+* Le maître inonde de `$80` tant que le jeu de l'esclave n'est pas au Computer Link : le
+  tampon de réception (4 Ko) perd alors les plus anciens octets au lieu d'échouer.
+* EmuTOS compilée ici par gcc 16 (LTO) : l'interruption de réception du SCC détruisait d2 du
+  code interrompu (panique « Bus Error » dans le curseur) ; corrigé dans la ROM d'essai en
+  sauvant d2/a2 dans `bios/vectors.S`. Rien à voir avec le lanceur ; TOS 4.04 n'est pas concerné.
+
+Non essayé : le chemin STinG (pas de carte réseau dans Hatari).
+
 ### Images extrapolées (option `F`, expérimentale) : 8,33 → 20 images/s
 
 **Par défaut depuis le 13/10 : désactivées.** Le lanceur rallume les caches et pose les routines

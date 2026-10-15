@@ -71,6 +71,10 @@ AUTO	equ	0
 	ifnd	CT60
 CT60	equ	0				; 1 : SCRCT60.PRG (Falcon à 68060 : CT60, CT63)
 	endc
+NETON	set	CT60				; multijoueur en ligne (online.s) : SCRCT60.PRG
+	ifne	AUTO
+NETON	set	0
+	endc
 
 ; instructions de cache des 68040/68060 (assemblage en -m68030)
 CPUSHA_BC	macro
@@ -93,6 +97,7 @@ OPT_FLUID	equ	5
 OPT_NOCACHE	equ	6
 OPT_X3		equ	7
 OPT_X6		equ	8			; (octet fort d'options)
+OPT_ONLINE	equ	9			; L : multijoueur en ligne (SCRCT60)
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -183,6 +188,12 @@ start:	move.l	4(sp),a5			; basepage
 	bra	quit
 
 .colour:
+	ifne	NETON
+	btst	#OPT_ONLINE-8,options		; multijoueur en ligne : connexion avant le jeu
+	beq.s	.nonet
+	bsr	net_connect
+.nonet:
+	endc
 	bsr	set_video
 	tst.l	d0
 	bmi	.novideo
@@ -207,6 +218,9 @@ start:	move.l	4(sp),a5			; basepage
 	trap	#1
 	else
 	bsr	run_game
+	ifne	NETON
+	bsr	net_close
+	endc
 
 	pea	hw_restore(pc)
 	move.w	#38,-(sp)
@@ -234,7 +248,7 @@ parse_options:
 	lea	$80(a0),a0
 	moveq	#0,d1
 	move.b	(a0)+,d1
-	bsr.s	.letters
+	bsr	.letters
 
 	clr.w	-(sp)				; SCRF030.INF : options sur la première ligne
 	pea	inf_name
@@ -245,7 +259,7 @@ parse_options:
 	bmi.s	.noinf
 	move.w	d0,d3
 	pea	inf_buf
-	move.l	#63,-(sp)
+	move.l	#1023,-(sp)
 	move.w	d3,-(sp)
 	move.w	#$3f,-(sp)			; Fread
 	trap	#1
@@ -258,7 +272,12 @@ parse_options:
 	tst.l	d1
 	ble.s	.noinf
 	lea	inf_buf,a0
-	bsr.s	.letters
+	ifne	NETON
+	movem.l	d1/a0,-(sp)
+	bsr	net_parse			; lignes « clé = valeur » (multijoueur)
+	movem.l	(sp)+,d1/a0
+	endc
+	bsr	.letters
 .noinf:
 
 	move.w	#-1,-(sp)
@@ -313,8 +332,11 @@ parse_options:
 	bne.s	.notf
 	bset	#OPT_FLUID,d4
 .notf:	cmp.b	#'K',d0
-	bne.s	.next
+	bne.s	.notk
 	bset	#OPT_NOCACHE,d4
+.notk:	cmp.b	#'L',d0
+	bne.s	.next
+	bset	#OPT_ONLINE,d4
 .next:	dbf	d1,.loop
 .eol:	rts
 
@@ -629,6 +651,12 @@ hw_install:
 	move.l	4.w,vectab+4
 	move.l	#priv_violation,vectab+$20
 	move.l	#vbl_hook,vectab+$70
+	ifne	NETON
+	tst.w	net_on
+	beq.s	.nonet
+	move.l	#net_trap13,vectab+$b4		; BIOS : câble du jeu vers le relais
+.nonet:
+	endc
 	clr.w	div60
 	tst.w	hz60
 	beq.s	.no60
@@ -705,6 +733,9 @@ hw_restore:
 ; VBL sur six seulement transmises au vecteur $70 (50 Hz en moyenne)
 vbl_hook:
 	addq.l	#1,vbl_ticks
+	ifne	NETON
+	bsr	net_vbl				; réseau : aussi pendant le chargement (PING du PC)
+	endc
 	tst.w	game_ok
 	bne.s	.ready
 	bsr	detect_game
@@ -1118,6 +1149,12 @@ tick_hook:
 	tst.b	G_CD(a6)
 	bne.s	.w
 	move.b	dbl_req,d0
+	ifne	NETON
+	tst.w	net_on				; en ligne : rythme d'origine (les deux jeux avancent
+	beq.s	.non				; tour par tour ensemble)
+	moveq	#0,d0
+.non:
+	endc
 	cmp.b	#2,d0
 	blo.s	.w
 ; adaptatif (x3 ou x6 au plus) : compteur de VBL restantes à l'entrée, rechargé à n au
@@ -1793,6 +1830,11 @@ vbl_phase:
 dt_cur:	dc.b	$ee				; facteur de pas posé sur les 22 sites
 	even
 	include	"snaptab.s"
+	ifne	NETON
+	text
+	include	"online.s"
+	data
+	endc
 	ifd	DBG
 dbg_magic:	dc.l	'HIST','HIST'
 dbg_ptr:	dc.l	dbg_ring
@@ -1919,7 +1961,7 @@ cam_prev:	ds.b	CAM_BYTES
 snapbuf:	ds.b	SNAP_BYTES+16
 old_stpal:	ds.w	16
 old_fpal:	ds.l	256
-inf_buf:	ds.b	64
+inf_buf:	ds.b	1024
 		ds.l	2
 vectab:		ds.l	256			; nouvelle table (VBR), alignée sur 4
 relays:		ds.w	3*256

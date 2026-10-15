@@ -138,6 +138,7 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                3     mode fluide en x3 (25 images/s) : Falcon accéléré
                6     mode fluide en x6 (50 images/s, adaptatif) : d'office sur
                      68040/68060 (CT60, CT63)
+               L     SCRCT60 : multijoueur en ligne (voir 5)
 
 
 4. Tester sous Hatari (Linux, macOS)
@@ -178,3 +179,39 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   Remarque : en ST basse sur VGA, Hatari calcule mal la fréquence du VIDEL et tourne à
   50 Hz au lieu de 60 ; SCRF030 mesure la fréquence, il ne corrige donc rien dans ce cas.
   La correction 60 Hz se teste en RVB NTSC (option -n de hatari_falcon.sh).
+
+
+5. Multijoueur en ligne (SCRCT60)
+
+  Le « 3. Computer Link » du jeu d'origine (deux machines reliées par un câble série) passe
+  par le serveur relais de la version PC (v45), comme son « 4. Online Multiplayer » : on
+  joue contre un PC ou contre un autre Falcon. Il faut la même disquette des deux côtés
+  (empreinte du jeu comparée à la connexion ; scr_tool.py l'écrit dans SCRCT60.INF).
+
+  Dans SCRCT60.INF : la lettre L sur la première ligne, puis par exemple
+    nom = Pierre              pseudo vu par l'adversaire
+    salle = 1234              salle privée (même code des deux côtés) ; sans : premier
+                              joueur disponible
+    relais = adresse:port     autre serveur relais ; sans : serveur officiel
+    transport = sting         carte réseau de la CT60 (par défaut) : STinG sous TOS, ou
+                              GlueSTiK sous MiNT (cookie STiK), configurés et connectés
+    transport = serie         flux brut sur le port série (modem WiFi, passerelle PC)
+    modem = ATDT relais:27420 (port série) commande envoyée, puis attente de CONNECT
+
+  Au lancement, SCRCT60 s'inscrit au relais, attend un adversaire et vérifie la poignée de
+  main (version v45, même jeu) ; Échap renonce et lance une partie seule. Le premier
+  inscrit est le maître : il saisit les pilotes et mène les menus, l'autre suit. Dans le
+  jeu, choisir « 3. Computer Link » des deux côtés (le PC : « 4. Online Multiplayer »).
+  La physique est celle du jeu d'origine : un serveur qui en impose une autre est refusé.
+
+  Les octets du câble partent dans des trames du protocole de la version PC (module C
+  falcon/net/net.c, relogé dans le lanceur). Le jeu attend chaque octet quelques tests
+  seulement, par des boucles de calcul calibrées pour un 68000 à 8 MHz : sur 68060, chaque
+  test sans octet attend 0,7 ms (timer C du MFP) pour retrouver ce délai.
+
+  Essais : sous Hatari (port série SCC du Falcon relié au relais par un pont TCP), contre
+  la version PC v45 : inscription, appariement, poignée de main, « Link complete », menus
+  menés par le PC. Le chemin STinG (carte réseau) n'a pas pu être essayé (Hatari n'émule
+  pas de carte réseau). Avec une EmuTOS compilée par gcc 16 (LTO), l'interruption du port
+  série détruisait le registre d2 du code interrompu ; TOS 4.04 n'est pas concerné.
+

@@ -485,7 +485,23 @@ FALCON_INF = (b'\r\n'
 
 CT60_INF = (b'\r\n'
             b'; SCRCT60.INF - options de SCRCT60.PRG (Falcon CT60/CT63) sur la PREMIERE ligne\r\n'
-            b';   3 = F1 en x3    K = caches coupes    N = pas de correction 60 Hz\r\n')
+            b';   3 = F1 en x3    K = caches coupes    N = pas de correction 60 Hz\r\n'
+            b';   L = multijoueur en ligne (Computer Link par le serveur relais de la version PC v45)\r\n'
+            b'; reglages du jeu en ligne (lignes sans ; au debut) :\r\n'
+            b';   nom = pseudo            salle = code d\'une salle privee (sinon premier joueur libre)\r\n'
+            b';   relais = adresse:port   (sinon serveur officiel)\r\n'
+            b';   transport = sting       (carte reseau : STinG ou GlueSTiK sous MiNT)\r\n'
+            b';   transport = serie       (port serie : modem WiFi, passerelle PC)\r\n'
+            b';   modem = commande        (port serie : envoyee avant, puis attente de CONNECT)\r\n'
+            b'nom = Falcon\r\n')
+
+
+def fnv1a(data):
+    """Empreinte FNV-1a 32 bits (celle que la version PC compare entre les deux joueurs)."""
+    h = 0x811c9dc5
+    for b in data:
+        h = ((h ^ b) * 0x01000193) & 0xffffffff
+    return h
 
 
 def falcon_bin(name):
@@ -525,7 +541,12 @@ def falcon_kit(img, outdir):
     # Falcon à 68060 (CT60, CT63) : lanceur à part, modes HD (F2/F3)
     open(os.path.join(hd, 'SCRCT60.PRG'), 'wb').write(ct60)
     open(os.path.join(hd, 'SCRCT60.TOS'), 'wb').write(ct60)
-    open(os.path.join(hd, 'SCRCT60.INF'), 'wb').write(CT60_INF)
+    try:                                       # empreinte du jeu relogé en $10100, comme la version PC
+        game_hash = fnv1a(relocate(game_program(img)))
+    except (ValueError, IndexError, StopIteration, struct.error):
+        game_hash = None                       # (sinon : celle du jeu étudié, dans le lanceur)
+    inf = CT60_INF + (b'empreinte = %08x\r\n' % game_hash if game_hash is not None else b'')
+    open(os.path.join(hd, 'SCRCT60.INF'), 'wb').write(inf)
 
     # 2. disquette : tout le contenu d'origine, F030AUTO.PRG en tête du dossier AUTO
     #    (exécuté avant le menu DEBUT.PRG), SCRF030.PRG à la racine, BPB standard
