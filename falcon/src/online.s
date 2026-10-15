@@ -764,18 +764,12 @@ net_vbl:
 	beq.s	.out
 	tst.w	net_busy
 	bne.s	.out
-; jamais dans un appel au système : le pilote du port série (ou STinG) n'est pas réentrant. Le
-; PC interrompu (cadre de vbl_hook, après notre adresse de retour) doit être dans le jeu, ou,
-; avant que le jeu soit reconnu (chargement), hors de la ROM du TOS
+; jamais pendant un appel au TOS : le pilote du port série n'est pas réentrant (sous Hatari, une
+; trame partait coupée puis la machine se figeait). PC interrompu (cadre de vbl_hook, après notre
+; adresse de retour) dans la ROM ($E00000 à $EFFFFF) : on attend la VBL suivante
 	move.l	d0,-(sp)
 	move.l	4+4+2(sp),d0
-	tst.w	game_ok
-	beq.s	.ld
-	sub.l	game_base,d0			; dans le jeu ($10100 à $70100)
-	cmp.l	#$60000,d0
-	bhs.s	.skip
-	bra.s	.go
-.ld:	cmp.l	#$e00000,d0			; ROM du TOS : $E00000 à $EFFFFF
+	cmp.l	#$e00000,d0
 	blo.s	.go
 	cmp.l	#$f00000,d0
 	blo.s	.skip
