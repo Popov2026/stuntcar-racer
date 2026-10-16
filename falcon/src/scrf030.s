@@ -97,7 +97,6 @@ OPT_FLUID	equ	5
 OPT_NOCACHE	equ	6
 OPT_X3		equ	7
 OPT_X6		equ	8			; (octet fort d'options)
-OPT_ONLINE	equ	9			; L : multijoueur en ligne (SCRCT60)
 
 ; adresses du jeu (documentées pour une base TEXT à $10100), relatives à la base
 G_VBL		equ	$4ec24-$10100		; VBL du jeu (movem.l d0-a6,-(sp))
@@ -189,10 +188,7 @@ start:	move.l	4(sp),a5			; basepage
 
 .colour:
 	ifne	NETON
-	btst	#OPT_ONLINE-8,options		; multijoueur en ligne : connexion avant le jeu
-	beq.s	.nonet
-	bsr	net_connect
-.nonet:
+	bsr	net_setup			; « 4. Online Multiplayer » : réglages, module réseau
 	endc
 	bsr	set_video
 	tst.l	d0
@@ -334,9 +330,7 @@ parse_options:
 .notf:	cmp.b	#'K',d0
 	bne.s	.notk
 	bset	#OPT_NOCACHE,d4
-.notk:	cmp.b	#'L',d0
-	bne.s	.next
-	bset	#OPT_ONLINE,d4
+.notk:
 .next:	dbf	d1,.loop
 .eol:	rts
 
@@ -652,11 +646,8 @@ hw_install:
 	move.l	#priv_violation,vectab+$20
 	move.l	#vbl_hook,vectab+$70
 	ifne	NETON
-	tst.w	net_on
-	beq.s	.nonet
-	move.l	#net_trap13,vectab+$b4		; BIOS : câble du jeu vers le relais
-	move.l	#net_trap14,vectab+$b8		; XBIOS : Rsconf du jeu ignoré
-.nonet:
+	move.l	#net_trap13,vectab+$b4		; BIOS et XBIOS : transparents, sauf après le
+	move.l	#net_trap14,vectab+$b8		; choix « 4. Online Multiplayer »
 	endc
 	clr.w	div60
 	tst.w	hz60
@@ -853,6 +844,9 @@ detect_game:
 	move.l	d0,wait_addr
 	move.l	a0,game_base
 	move.w	#1,game_ok
+	ifne	NETON
+	bsr	online_patch			; 4e choix du menu de départ (même en jeu d'origine)
+	endc
 	btst	#OPT_ORIG,options+1
 	bne	.no
 	move.w	is_030,d0

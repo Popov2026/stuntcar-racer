@@ -1,15 +1,17 @@
 ; ---------------------------------------------------------------------------
 ; online.s - multijoueur en ligne de SCRCT60 (inclus par scrf030.s, -DCT60=1)
 ;
-; Le jeu d'origine relie deux machines par le câble série (« 3. Computer Link ») et n'y accède
-; que par le BIOS, périphérique 1 (Bconstat, Bconin, Bconout : docs/RETRO_INGENIERIE.md §10). Ici
-; ces appels sont détournés (trap #13, par la table des vecteurs déplacée) vers le serveur relais
-; de la version PC v45 : les octets du câble partent dans des trames DATA, comme le fait la version
-; PC (native/src/net.cpp). Protocole dans falcon/net/net.c (C, relogé ici).
+; Comme la version PC (v45), le menu de départ du jeu reçoit un 4e choix, « 4. Online
+; Multiplayer ». Le jeu l'envoie à son Computer Link ($453B6), qui n'accède au câble que par le
+; BIOS, périphérique 1 (Bconstat, Bconin, Bconout : docs/RETRO_INGENIERIE.md §10) : après ce
+; choix, ces appels sont détournés (trap #13, par la table des vecteurs déplacée) vers le serveur
+; relais de la version PC ; les octets du câble partent dans des trames DATA, comme le fait la
+; version PC (native/src/net.cpp). Protocole dans falcon/net/net.c (C, relogé ici).
+; « 3. Computer Link » reste le câble null modem d'origine : BIOS laissé au TOS.
 ;
 ; Transport : STinG (cookie « STiK » : STinG sous TOS, GlueSTiK sous MiNT ; carte réseau de la
 ; CT60), ou flux brut sur le port série (modem WiFi, passerelle PC, essais sous Hatari).
-; Configuration : lettre L sur la première ligne de SCRCT60.INF, puis des lignes
+; Réglages dans SCRCT60.INF, après la première ligne :
 ;   nom = pseudo        salle = code (vide : premier joueur disponible)
 ;   relais = adresse[:port] (vide : serveur officiel)    transport = sting | serie
 ;   modem = commande envoyée au modem (transport série, ex. ATDT relais.exemple:27420)
@@ -318,13 +320,11 @@ io_ms:	move.l	$4ba.w,d0			; horloge 200 Hz -> millisecondes
 	mulu.l	#5,d0
 	rts
 
-; --------------------------------------------------------------- connexion (avant le jeu)
-; d0 = 0 : relié à l'adversaire ; sinon, partie seule (message affiché)
-net_connect:
-	movem.l	d1-d7/a0-a6,-(sp)
-	lea	txt_net1(pc),a0
-	bsr	print
-	pea	.sup(pc)			; vecteur BIOS du TOS, horloge, STinG
+; --------------------------------------------------------------- au lancement (rien sur le réseau)
+; réglages de SCRCT60.INF dans struct net, module C relogé, STinG cherché ; mode utilisateur
+net_setup:
+	movem.l	d0-d2/a0-a2/a6,-(sp)
+	pea	.sup(pc)			; vecteurs du TOS, STinG
 	move.w	#38,-(sp)
 	trap	#14
 	addq.l	#6,sp
@@ -350,7 +350,7 @@ net_connect:
 	moveq	#15-1,d0
 	bsr	.cpy
 	move.l	#'v45'<<8,NET_VERSION(a6)
-	move.l	#$b1f6578d,d0			; empreinte du jeu étudié (scr_tool.py la réécrit)
+	move.l	#$b1f6578d,d0			; empreinte du jeu étudié (scr_tool.py l'écrit dans l'INF)
 	lea	cfg_hash,a0
 	tst.b	(a0)
 	beq.s	.h1
@@ -372,8 +372,7 @@ net_connect:
 	add.b	#13,d2
 	dbf	d1,.dec
 	clr.b	(a1)
-	lea	txt_neto(pc),a0
-	bra.s	.pr
+	bra.s	.tr
 .cfgr:	lea	net_host,a1			; « adresse:port »
 .cr:	move.b	(a0)+,d0
 	beq.s	.cre
@@ -393,40 +392,13 @@ net_connect:
 	bra.s	.pd
 .pe:	move.w	d1,net_port
 .cre:	clr.b	(a1)
-	lea	net_host,a0
-.pr:	move.l	a0,-(sp)
-	lea	txt_net2(pc),a0
-	bsr	print
-	move.l	(sp)+,a0
-	bsr	print
-	lea	txt_crlf(pc),a0
-	bsr	print
-; transport
-	cmp.b	#'s',cfg_transport		; « serie » (sinon STinG)
+; transport : STinG (défaut) ou port série
+.tr:	lea	net_io,a0
+	cmp.b	#'s',cfg_transport		; « serie »
 	bne.s	.st
 	cmp.b	#'e',cfg_transport+1
-	beq	.serial
-.st:	tst.l	sting_tpl
-	bne.s	.st1
-	lea	txt_nost(pc),a0
-	bra	.fail
-.st1:	pea	sting_open(pc)
-	move.w	#38,-(sp)
-	trap	#14
-	addq.l	#6,sp
-	tst.l	d0
-	beq.s	.st2
-	lea	txt_notcp(pc),a0
-	bra	.fail
-.st2:	move.w	#1,net_sting
-	lea	net_io,a0
-	move.l	#st_send,(a0)+
-	move.l	#st_avail,(a0)+
-	move.l	#st_get,(a0)+
-	move.l	#io_ms,(a0)
-	bra.s	.join
-.serial:
-	lea	net_io,a0
+	bne.s	.st
+	move.w	#1,net_serial
 	move.l	#se_send,(a0)+
 	move.l	#se_avail,(a0)+
 	move.l	#se_get,(a0)+
@@ -440,94 +412,12 @@ net_connect:
 	move.w	#15,-(sp)
 	trap	#14
 	lea	14(sp),sp
-	tst.b	cfg_modem			; modem : commande puis « CONNECT »
-	beq.s	.join
-	lea	cfg_modem,a0
-	bsr	ser_puts
-	move.w	#13,-(sp)
-	move.w	#1,-(sp)
-	move.w	#3,-(sp)
-	trap	#13
-	addq.l	#6,sp
-	bsr	ser_connect
-	tst.l	d0
-	beq.s	.join
-	lea	txt_nomodem(pc),a0
-	bra	.fail
-; inscription, attente de l'adversaire, poignée de main
-.join:	pea	.start(pc)			; net_start (superviseur : horloge $4BA)
-	move.w	#38,-(sp)
-	trap	#14
-	addq.l	#6,sp
-	clr.l	net_shown
-.wait:	bsr	net_super_poll
-	move.l	NET_STATE(a6),d7
-	lea	NET_TEXT(a6),a0			; état affiché quand il change
-	move.l	(a0),d0
-	cmp.l	net_shown,d0
-	beq.s	.same
-	move.l	d0,net_shown
-	move.l	a0,-(sp)
-	lea	txt_netin(pc),a0
-	bsr	print
-	move.l	(sp)+,a0
-	bsr	print
-	lea	txt_crlf(pc),a0
-	bsr	print
-.same:	tst.l	d7
-	bmi	.failed
-	cmp.l	#NS_CONNECTED,d7
-	beq.s	.ok
-	move.w	#2,-(sp)			; Échap : partie seule
-	move.w	#1,-(sp)			; Bconstat(2)
-	trap	#13
-	addq.l	#4,sp
-	tst.w	d0
-	beq.s	.wait
-	move.w	#2,-(sp)
-	move.w	#2,-(sp)			; Bconin(2)
-	trap	#13
-	addq.l	#4,sp
-	cmp.b	#27,d0
-	bne.s	.wait
-	lea	txt_netesc(pc),a0
-	bra.s	.fail0
-.ok:	tst.l	NET_PARAMSOK(a6)
-	bne.s	.ok2
-	lea	txt_netparams(pc),a0
-	bra.s	.fail0
-.ok2:	lea	txt_netok(pc),a0		; relié : rôle et adversaire
-	bsr	print
-	lea	NET_PEER(a6),a0
-	bsr	print
-	lea	txt_netm(pc),a0
-	tst.l	NET_MASTER(a6)
-	bne.s	.m
-	lea	txt_nets(pc),a0
-.m:	bsr	print
-	move.w	#1,net_on
-	moveq	#100-1,d3			; 2 s pour lire
-.w2:	move.w	#37,-(sp)
-	trap	#14
-	addq.l	#2,sp
-	dbf	d3,.w2
-	moveq	#0,d0
 	bra.s	.out
-.failed:
-	lea	NET_TEXT(a6),a0
-.fail:	move.l	a0,-(sp)
-	lea	txt_netfail(pc),a0
-	bsr	print
-	move.l	(sp)+,a0
-	bsr	print
-	lea	txt_crlf(pc),a0
-.fail0:	bsr	print
-	lea	txt_netsolo(pc),a0
-	bsr	print
-	bsr	wait_key
-	bsr	net_close
-	moveq	#-1,d0
-.out:	movem.l	(sp)+,d1-d7/a0-a6
+.st:	move.l	#st_send,(a0)+
+	move.l	#st_avail,(a0)+
+	move.l	#st_get,(a0)+
+	move.l	#io_ms,(a0)
+.out:	movem.l	(sp)+,d0-d2/a0-a2/a6
 	rts
 .cpy:	move.b	(a0)+,(a1)+
 	dbeq	d0,.cpy
@@ -551,48 +441,98 @@ net_connect:
 	move.l	$b8.w,xbios_vec
 	bsr	sting_find
 	rts
-.start:	pea	net_state
-	NETCALL	0
-	addq.l	#4,sp
-	rts
 .offi:	dc.b	$37,$06,$07,$e2,$ef,$e9,$c9,$d1,$a7,$e1,$bf,$8a
 	even
 
-; texte (a0) vers le port série (modem)
+; --------------------------------------------------------------- connexion (« 4. Online Multiplayer »)
+; appelée au test maître / esclave du Computer Link ($453EC), pendant que le jeu affiche
+; « Linking » ; superviseur. Relais (STinG ou modem), inscription, attente d'un adversaire,
+; poignée de main. Échap (touche du jeu) abandonne. d0 = 0 : relié (net_on posé)
+net_open:
+	movem.l	d1-d7/a0-a6,-(sp)
+	bsr	net_shut			; connexion précédente éventuelle
+	lea	net_state,a6
+	tst.w	net_serial
+	bne.s	.ser
+	tst.l	sting_tpl			; carte réseau : STinG (ou GlueSTiK)
+	beq	.no
+	bsr	sting_open
+	tst.l	d0
+	bne	.no
+	move.w	#1,net_sting
+	bra.s	.join
+.ser:	tst.b	cfg_modem			; port série : modem éventuel, puis « CONNECT »
+	beq.s	.join
+	lea	cfg_modem,a0
+	bsr	ser_puts
+	lea	.cr(pc),a0
+	bsr	ser_puts
+	bsr	ser_connect
+	tst.l	d0
+	bne.s	.no
+.join:	pea	net_state			; JOIN2
+	NETCALL	0
+	addq.l	#4,sp
+.wait:	NETCALL	4				; net_poll
+	tst.l	d0
+	bmi.s	.no
+	cmp.l	#NS_CONNECTED,d0
+	beq.s	.ok
+	move.l	game_base,a0			; Échap
+	cmp.b	#$b3,G_KEYS+1(a0)
+	bne.s	.wait
+	bra.s	.no
+.ok:	tst.l	NET_PARAMSOK(a6)		; physique imposée par le serveur : celle d'origine
+	beq.s	.no
+	move.w	#1,net_on
+	moveq	#0,d0
+	bra.s	.out
+.no:	bsr	net_shut
+	moveq	#-1,d0
+.out:	movem.l	(sp)+,d1-d7/a0-a6
+	rts
+.cr:	dc.b	13,0
+	even
+
+; texte (a0) vers le port série (modem) ; superviseur
 ser_puts:
 	movem.l	d0-d2/a0-a3,-(sp)
 	move.l	a0,a3
 .l:	moveq	#0,d0
 	move.b	(a3)+,d0
 	beq.s	.out
-	move.w	d0,-(sp)
+.w:	move.w	d0,-(sp)
 	move.w	#1,-(sp)
-	move.w	#3,-(sp)			; Bconout(1)
-	trap	#13
-	addq.l	#6,sp
+	aux	$55e				; Bcostat(1)
+	addq.l	#2,sp
+	move.w	(sp)+,d1
+	tst.w	d0
+	beq.s	.w0
+	move.w	d1,-(sp)
+	move.w	#1,-(sp)
+	aux	$57e				; Bconout(1, octet)
+	addq.l	#4,sp
 	bra.s	.l
+.w0:	move.w	d1,d0
+	bra.s	.w
 .out:	movem.l	(sp)+,d0-d2/a0-a3
 	rts
-; attend « CONNECT » du modem (30 s) ; d0 = 0 si reçu
+; attend « CONNECT » du modem (30 s) ; d0 = 0 si reçu ; superviseur
 ser_connect:
 	movem.l	d1-d4/a0-a3,-(sp)
-	bsr	hz200
-	move.l	d0,d4
+	move.l	$4ba.w,d4
 	add.l	#6000,d4
 	lea	.word(pc),a3
-.l:	bsr	hz200
-	cmp.l	d4,d0
-	bhi.s	.no
+.l:	cmp.l	$4ba.w,d4
+	blo.s	.no
 	move.w	#1,-(sp)
-	move.w	#1,-(sp)			; Bconstat(1)
-	trap	#13
-	addq.l	#4,sp
+	aux	$51e				; Bconstat(1)
+	addq.l	#2,sp
 	tst.w	d0
 	beq.s	.l
 	move.w	#1,-(sp)
-	move.w	#2,-(sp)			; Bconin(1)
-	trap	#13
-	addq.l	#4,sp
+	aux	$53e				; Bconin(1)
+	addq.l	#2,sp
 	cmp.b	(a3)+,d0
 	beq.s	.n
 	lea	.word(pc),a3
@@ -606,50 +546,115 @@ ser_connect:
 	rts
 .word:	dc.b	"CONNECT",0
 	even
-; horloge 200 Hz ($4BA, lisible en superviseur seulement) -> d0
-hz200:	movem.l	d1-d2/a0-a2,-(sp)
-	pea	.r(pc)
-	move.w	#38,-(sp)			; Supexec
-	trap	#14
-	addq.l	#6,sp
-	movem.l	(sp)+,d1-d2/a0-a2
-	rts
-.r:	move.l	$4ba.w,d0
-	rts
 
-; net_poll en superviseur (STinG et BIOS appelés comme pendant le jeu)
-net_super_poll:
-	pea	.p(pc)
-	move.w	#38,-(sp)
-	trap	#14
-	addq.l	#6,sp
-	rts
-.p:	NETCALL	4
-	rts
-
-; fin : BYE et fermeture (superviseur ou utilisateur)
-net_close:
+; fin de la partie en ligne : BYE, connexion fermée ; superviseur
+net_shut:
 	movem.l	d0-d2/a0-a2,-(sp)
-	pea	.c(pc)
-	move.w	#38,-(sp)
-	trap	#14
-	addq.l	#6,sp
-	clr.w	net_on
-	movem.l	(sp)+,d0-d2/a0-a2
-	rts
-.c:	tst.w	net_on
+	tst.w	net_on
 	beq.s	.n
 	NETCALL	20				; net_bye
-.n:	tst.w	net_sting
+.n:	clr.w	net_on
+	tst.w	net_sting
 	beq.s	.s
 	bsr	sting_close
 	clr.w	net_sting
-.s:	rts
+.s:	movem.l	(sp)+,d0-d2/a0-a2
+	rts
+; idem, depuis le mode utilisateur ou superviseur (fin du lanceur)
+net_close:
+	movem.l	d0-d2/a0-a2,-(sp)
+	pea	net_shut(pc)
+	move.w	#38,-(sp)			; Supexec
+	trap	#14
+	addq.l	#6,sp
+	clr.b	net_online
+	movem.l	(sp)+,d0-d2/a0-a2
+	rts
+
+; --------------------------------------------------------------- menu de départ du jeu
+; « 1. Single Player League / 2. Multiplayer / 3. Computer Link » + « 4. Online Multiplayer »,
+; comme la version PC : 4 entrées ($4BE3C : moveb #2,d2 -> #3), 4e texte $F0 dans la table du
+; menu ($49218 + $10), affiché par l'impression du jeu ($47BA0 / $47BC6) depuis txt_online ; le
+; choix est noté au retour du menu ($4BE44 : jsr $48D88). Le jeu envoie tout choix > 1 au
+; Computer Link ($453B6) : le 4e y passe aussi, par le relais au lieu du port série.
+online_patch:
+	movem.l	d0/a0-a1,-(sp)
+	move.l	game_base,a0
+	cmp.l	#$143c0002,$4be3c-$10100(a0)	; moveb #2,d2
+	bne	.no
+	tst.b	$49218+$13-$10100(a0)		; 4e entrée libre
+	bne	.no
+	cmp.w	#$4a39,$47ba0-$10100(a0)	; tstb $4C0F1
+	bne	.no
+	lea	$4c0f1-$10100(a0),a1
+	cmp.l	$47ba2-$10100(a0),a1
+	bne	.no
+	cmp.w	#$227c,$47bc6-$10100(a0)	; moveal #$4C0FB,a1
+	bne	.no
+	lea	$4c0fb-$10100(a0),a1
+	cmp.l	$47bc8-$10100(a0),a1
+	bne	.no
+	cmp.w	#$4eb9,$4be44-$10100(a0)	; jsr $48D88
+	bne	.no
+	lea	$48d88-$10100(a0),a1
+	cmp.l	$4be46-$10100(a0),a1
+	bne	.no
+	move.b	#3,$4be3f-$10100(a0)
+	move.b	#TXT_ONLINE,$49218+$13-$10100(a0)
+	move.w	#$4eb9,$47ba0-$10100(a0)
+	move.l	#print_start,$47ba2-$10100(a0)
+	move.w	#$4eb9,$47bc6-$10100(a0)
+	move.l	#print_loop,$47bc8-$10100(a0)
+	move.l	#menu_choice,$4be46-$10100(a0)
+	bsr	flush_ic
+.no:	movem.l	(sp)+,d0/a0-a1
+	rts
+TXT_ONLINE	equ	$f0
+; au lieu de « tstb $4C0F1 » : texte demandé (d1) noté, drapeaux comme l'instruction d'origine
+print_start:
+	move.b	d1,txt_start
+	move.l	a0,-(sp)
+	move.l	game_base,a0
+	tst.b	$4c0f1-$10100(a0)
+	movea.l	(sp)+,a0			; (movea : drapeaux gardés)
+	rts
+; au lieu de « moveal #$4C0FB,a1 » (puis le jeu lit (a1,d1.w)) : texte $F0 = txt_online
+print_loop:
+	move.l	game_base,a1
+	cmp.b	#TXT_ONLINE,txt_start
+	bne.s	.orig
+	tst.b	$4c0f1-$10100(a1)		; menu de départ seulement
+	bpl.s	.orig
+	move.l	d0,-(sp)
+	lea	txt_online,a1			; a1 + d1.w = txt_online + (d1.b - $F0)
+	moveq	#0,d0
+	move.b	d1,d0
+	sub.b	#TXT_ONLINE,d0
+	add.l	d0,a1
+	move.w	d1,d0
+	ext.l	d0
+	sub.l	d0,a1
+	move.l	(sp)+,d0
+	rts
+.orig:	add.l	#$4c0fb-$10100,a1
+	rts
+; au lieu de « jsr $48D88 » au menu de départ : choix noté (3 : en ligne) ; toute partie en
+; ligne précédente est finie
+menu_choice:
+	pea	.ret(pc)
+	move.l	game_base,-(sp)
+	add.l	#$48d88-$10100,(sp)
+	rts					; menu du jeu, retour en .ret
+.ret:	bsr	net_close
+	cmp.b	#3,d0
+	seq	net_online
+	rts
 
 ; --------------------------------------------------------------- pendant le jeu
-; trap #13 (BIOS) : périphérique 1 (câble du jeu) vers le réseau, le reste au TOS
+; trap #13 (BIOS) : après « 4. Online Multiplayer », le périphérique 1 (câble du jeu) va au relais ;
+; sinon tout va au TOS (« 3. Computer Link » : vrai câble série, comme à l'origine)
 net_trap13:
-	tst.w	net_on
+	tst.b	net_online
 	beq.s	.tos
 	move.l	a0,-(sp)
 	lea	4+8(sp),a0			; arguments : après le cadre (format 0, 8 octets)
@@ -676,6 +681,8 @@ net_trap13:
 .out:	moveq	#0,d0				; Bconout(1, octet)
 	move.w	4(a0),d0
 	move.l	(sp)+,a0
+	tst.w	net_on				; pas (ou plus) relié : octet perdu
+	beq.s	.o1
 	movem.l	d1-d2/a0-a1,-(sp)
 	move.w	#1,net_busy
 	move.l	d0,-(sp)
@@ -683,7 +690,7 @@ net_trap13:
 	addq.l	#4,sp				; câble par le jeu, ou VBL)
 	clr.w	net_busy
 	movem.l	(sp)+,d1-d2/a0-a1
-	moveq	#-1,d0
+.o1:	moveq	#-1,d0
 	rte
 .stat:	move.l	4(a0),d0			; Bconstat(1) ; d0 = retour du « jsr $4476E » du jeu
 	move.l	(sp)+,a0
@@ -693,37 +700,45 @@ net_trap13:
 	move.l	d0,d2
 	sub.l	a1,d2				; 0 : test de $453EC (maître ou esclave ?)
 	move.w	#1,net_busy
-	clr.w	net_el
+	tst.w	net_on
+	bne.s	.st0
+	tst.l	d2				; pas relié : la connexion se fait au test
+	bne	.st3				; maître / esclave, jamais avant
+	bsr	net_open
+	tst.l	d0
+	beq.s	.st0
+	move.b	#1,net_reject			; échec ou Échap : un octet autre que $80, le
+	bra.s	.st2				; jeu abandonne (« Link abandoned », menu)
+.st0:	clr.w	net_el
 	moveq	#0,d0
 	move.b	$fffffa23.w,d0			; MFP, timer C (horloge 200 Hz du TOS)
 	move.w	d0,net_tc
-.st1:	NETCALL	4
+.st1:	tst.w	net_on
+	beq.s	.st3
+	NETCALL	4
 	NETCALL	12				; net_avail
 	tst.l	d0
 	bne.s	.st2
 ; rien d'arrivé : on attend jusqu'à 0,7 ms, l'écart entre deux tests d'un 68000 à 8 MHz. Les
 ; délais d'attente du jeu ($447F0 : 3 tests par octet) sont des boucles de calcul, presque nulles sur
-; 68060 : sans cela, un octet en route (port série, paquet TCP coupé) passerait pour perdu
+; 68060 : sans cela, un octet en route (paquet TCP coupé, port série) passerait pour perdu
 	tst.l	d2
 	beq.s	.sl
 	bsr	tc_step
 	cmp.w	#27,net_el			; 27 x 26 µs
 	blo.s	.st1
 	bra.s	.st3
-.sl:
 ; esclave : au test « octet reçu ? » qui suit le vidage du tampon ($453B6 -> $453EC), le jeu ne
 ; doit pas se croire maître : il attend le premier octet du maître (comme la version PC, qui retient
 ; son jeu à cet endroit) ; Échap rend la main
-	tst.l	d2
-	bne.s	.st3
-	tst.l	net_state+NET_MASTER
+.sl:	tst.l	net_state+NET_MASTER
 	bne.s	.st3
 	tst.l	net_state+NET_STATE
 	bmi.s	.st3
 	move.l	game_base,a0
 	cmp.b	#$b3,G_KEYS+1(a0)
-	beq.s	.st3
-	bra.s	.st1
+	bne.s	.st1
+	move.b	#1,net_reject
 .st2:	moveq	#-1,d0
 	bra.s	.st4
 .st3:	moveq	#0,d0
@@ -732,16 +747,24 @@ net_trap13:
 	rte
 .in:	move.l	(sp)+,a0			; Bconin(1) : attend un octet
 	movem.l	d1-d2/a0-a1,-(sp)
-	move.w	#1,net_busy
-.in1:	NETCALL	4
+	moveq	#0,d0
+	tst.b	net_reject			; refus (voir plus haut) : 0 au lieu de $80
+	beq.s	.in0
+	clr.b	net_reject
+	bsr	net_shut
+	bra.s	.in3
+.in0:	move.w	#1,net_busy
+.in1:	tst.w	net_on				; liaison perdue : 0
+	beq.s	.in2
+	NETCALL	4
 	NETCALL	16				; net_get
 	tst.l	d0
 	bpl.s	.in2
-	tst.l	net_state+NET_STATE		; liaison perdue : 0
+	tst.l	net_state+NET_STATE
 	bpl.s	.in1
 	moveq	#0,d0
 .in2:	clr.w	net_busy
-	movem.l	(sp)+,d1-d2/a0-a1
+.in3:	movem.l	(sp)+,d1-d2/a0-a1
 	rte
 
 ; temps écoulé (net_el, en périodes de 26 µs du timer C : 192 par 5 ms)
@@ -757,9 +780,9 @@ tc_step:
 	rts
 
 ; trap #14 (XBIOS) : le jeu règle le port série à 9600 bauds avant le Computer Link ($4483E,
-; Rsconf) ; en ligne, le port (transport série) reste réglé pour le relais
+; Rsconf) ; en ligne (4e choix), le port (transport série) reste réglé pour le relais
 net_trap14:
-	tst.w	net_on
+	tst.b	net_online
 	beq.s	.tos
 	move.l	a0,-(sp)
 	lea	4+8(sp),a0
@@ -790,36 +813,8 @@ net_vbl:
 .out:	rts
 
 	data
-txt_net1:
-	dc.b	13,10,"Multijoueur en ligne (Computer Link par le relais v45)",13,10,0
-txt_net2:
-	dc.b	"Serveur : ",0
-txt_neto:
-	dc.b	"serveur officiel",0
-txt_netin:
-	dc.b	"  ",0
-txt_nost:
-	dc.b	"STinG absent (cookie STiK) : installez STinG ou mettez transport = serie",0
-txt_notcp:
-	dc.b	"connexion TCP au serveur impossible (STinG)",0
-txt_nomodem:
-	dc.b	"le modem n'a pas repondu CONNECT",0
-txt_netfail:
-	dc.b	"Echec : ",0
-txt_netesc:
-	dc.b	"Abandon (Echap).",13,10,0
-txt_netparams:
-	dc.b	"Le serveur impose une physique modifiee : impossible sur Falcon.",13,10,0
-txt_netsolo:
-	dc.b	"Partie sans reseau. Une touche...",13,10,0
-txt_netok:
-	dc.b	"Relie a ",0
-txt_netm:
-	dc.b	" : vous etes le maitre (vous menez les menus).",13,10
-	dc.b	"Dans le jeu : 3. Computer Link.",13,10,0
-txt_nets:
-	dc.b	" : il mene les menus.",13,10
-	dc.b	"Dans le jeu : 3. Computer Link.",13,10,0
+txt_online:
+	dc.b	"Online Multiplayer",$ff
 	even
 	section	netblob,data
 net_blob:	incbin	"../net/net.bin"
@@ -828,7 +823,12 @@ net_rel:	include	"../net/netrel.s"
 	text
 
 	bss
-net_on:		ds.w	1
+net_on:		ds.w	1			; relié à l'adversaire
+net_serial:	ds.w	1
+net_online:	ds.b	1			; 4e choix du menu de départ
+net_reject:	ds.b	1
+txt_start:	ds.b	1
+		even
 xbios_vec:	ds.l	1
 net_busy:	ds.w	1
 net_sting:	ds.w	1
@@ -839,7 +839,6 @@ bios_vec:	ds.l	1
 net_tc:		ds.w	1
 net_el:		ds.w	1
 net_ip:		ds.l	1
-net_shown:	ds.l	1
 net_io:		ds.l	4
 net_cfg:
 cfg_name:	ds.b	16

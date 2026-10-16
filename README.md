@@ -103,8 +103,9 @@ HATARI=hatari TOS=etos512us.img falcon/test/game_test.sh disque.st sortie   # le
 ```
 
 Sur le Falcon : `SCRF030.PRG` à côté de `GAME.PUT`, ou démarrer sur `SCR_F030.ST`.
-Sur CT60, `SCRCT60.PRG` joue aussi en ligne contre la version PC (lettre `L` dans `SCRCT60.INF` :
-le « Computer Link » passe par le serveur relais v45, carte réseau par STinG ou port série).
+Sur CT60, `SCRCT60.PRG` ajoute au menu du jeu « 4. Online Multiplayer », comme la version PC :
+partie en ligne par le serveur relais v45 (carte réseau par STinG, ou port série) ; « 3. Computer
+Link » reste le câble null modem.
 Détails : `falcon/LISEZMOI.txt` et `docs/FALCON030.md`.
 
 ## Lancer la réplique (navigateur)

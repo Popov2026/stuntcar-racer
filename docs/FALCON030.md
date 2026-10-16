@@ -139,7 +139,17 @@ ligne par ligne (`t_color`) ; sur 68060, `CPUSHL` ne suffisait pas : bordure d'u
 couleur, qui clignotait. Sur 68040/68060, `$5313E` est remplacé par `t_pixel`, qui lit la
 couleur notée par `t_color` (mêmes écritures, même d0, même Z).
 
-### Multijoueur en ligne (SCRCT60, lettre `L`) : le Computer Link par le relais v45
+### Multijoueur en ligne (SCRCT60) : « 4. Online Multiplayer » par le relais v45
+
+Comme dans la version PC, le menu de départ (`$4BE28`) a un 4e choix : nombre d'entrées
+`$4BE3C` passé de 2 à 3 (`$48D88` soustrait 1), texte `$F0` en 4e place de la table du menu
+(`$49218 + $13`), affiché par l'impression du jeu détournée (`$47BA0` note le texte demandé,
+`$47BC6` lit `txt_online` pour `$F0` au menu de départ), choix noté au retour (`$4BE44`). Tout
+choix > 1 va au Computer Link (`$453B6`) : le 4e y va aussi, et le BIOS détourné envoie alors
+le câble au relais. « 3. Computer Link » reste le vrai câble null modem (BIOS laissé au TOS).
+La connexion se fait au test maître / esclave (`$453EC`) pendant que le jeu affiche
+« Linking » ; échec ou Échap : un octet autre que `$80` est rendu au jeu, qui abandonne
+(« Link abandoned », retour au menu).
 
 Le jeu n'accède au câble que par le BIOS, périphérique 1 (`RETRO_INGENIERIE.md` §10). Le
 lanceur CT60 détourne `trap #13` (table des vecteurs déplacée) : Bconout/Bconstat/Bconin/

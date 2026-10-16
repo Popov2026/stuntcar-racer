@@ -138,7 +138,6 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                3     mode fluide en x3 (25 images/s) : Falcon accéléré
                6     mode fluide en x6 (50 images/s, adaptatif) : d'office sur
                      68040/68060 (CT60, CT63)
-               L     SCRCT60 : multijoueur en ligne (voir 5)
 
 
 4. Tester sous Hatari (Linux, macOS)
@@ -181,14 +180,15 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   La correction 60 Hz se teste en RVB NTSC (option -n de hatari_falcon.sh).
 
 
-5. Multijoueur en ligne (SCRCT60)
+5. Multijoueur en ligne (SCRCT60) : « 4. Online Multiplayer »
 
-  Le « 3. Computer Link » du jeu d'origine (deux machines reliées par un câble série) passe
-  par le serveur relais de la version PC (v45), comme son « 4. Online Multiplayer » : on
-  joue contre un PC ou contre un autre Falcon. Il faut la même disquette des deux côtés
-  (empreinte du jeu comparée à la connexion ; scr_tool.py l'écrit dans SCRCT60.INF).
+  Comme la version PC (v45), le menu de départ du jeu a un 4e choix, « 4. Online
+  Multiplayer », qui relie au serveur relais : on joue contre un PC ou contre un autre
+  Falcon. « 3. Computer Link » reste le câble null modem d'origine, sans changement.
+  Il faut la même disquette des deux côtés (empreinte du jeu comparée à la connexion ;
+  scr_tool.py l'écrit dans SCRCT60.INF).
 
-  Dans SCRCT60.INF : la lettre L sur la première ligne, puis par exemple
+  Réglages dans SCRCT60.INF (après la première ligne, celle des lettres d'options) :
     nom = Pierre              pseudo vu par l'adversaire
     salle = 1234              salle privée (même code des deux côtés) ; sans : premier
                               joueur disponible
@@ -198,24 +198,22 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     transport = serie         flux brut sur le port série (modem WiFi, passerelle PC)
     modem = ATDT relais:27420 (port série) commande envoyée, puis attente de CONNECT
 
-  Au lancement, SCRCT60 s'inscrit au relais, attend un adversaire et vérifie la poignée de
-  main (version v45, même jeu) ; Échap renonce et lance une partie seule. Le premier
-  inscrit est le maître : il saisit les pilotes et mène les menus, l'autre suit. Dans le
-  jeu, choisir « 3. Computer Link » des deux côtés (le PC : « 4. Online Multiplayer »).
-  La physique est celle du jeu d'origine : un serveur qui en impose une autre est refusé.
+  En choisissant « 4. Online Multiplayer », le jeu affiche « Linking » : SCRCT60 ouvre la
+  connexion, s'inscrit au relais, attend un adversaire et vérifie la poignée de main
+  (version v45, même jeu). Le premier inscrit est le maître : il saisit les pilotes et
+  mène les menus, l'autre suit. Échap renonce ; un relais injoignable ou un refus donne
+  « Link abandoned » et le retour au menu. La physique est celle du jeu d'origine : un
+  serveur qui en impose une autre est refusé.
 
   Les octets du câble partent dans des trames du protocole de la version PC (module C
   falcon/net/net.c, relogé dans le lanceur). Le jeu attend chaque octet quelques tests
-  seulement, par des boucles de calcul calibrées pour un 68000 à 8 MHz : sur 68060, chaque
-  test sans octet attend 0,7 ms (timer C du MFP) pour retrouver ce délai.
+  seulement, par des boucles de calcul calibrées pour un 68000 à 8 MHz : sur 68060, en
+  ligne, chaque test sans octet attend 0,7 ms (timer C du MFP) pour retrouver ce délai.
 
   Essais : sous Hatari (port série SCC du Falcon relié au relais par un pont TCP), contre
-  la version PC v45 : inscription, appariement, poignée de main, « Link complete », puis
-  menus menés par le PC (saisie des pilotes) pendant que le Falcon affiche « Please wait »,
-  la liaison tenant toute la session (PING/PONG). Une course complète n'a pas été menée
-  jusqu'au bout en automatique (saisie du PC difficile à scripter), mais la course passe par
-  la même routine d'échange que les menus. Le chemin STinG (carte réseau) n'a pas pu être
-  essayé : Hatari n'émule pas de carte réseau.
-
-  Sous MiNT (GlueSTiK), le réseau est relevé aussi depuis la VBL : si cela pose problème,
-  le transport série reste possible.
+  la version PC v45 : menu à 4 choix, « Linking », appariement, poignée de main, « Link
+  complete », menus menés par le PC, liaison tenue toute la session ; relais injoignable :
+  « Link abandoned ». « 3. Computer Link » émet toujours ses octets bruts sur le port
+  série. Pas de course menée jusqu'au bout en automatique (saisie du PC difficile à
+  scripter). Le chemin STinG (carte réseau) n'a pas pu être essayé : Hatari n'émule pas
+  de carte réseau.
