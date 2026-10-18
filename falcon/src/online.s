@@ -13,7 +13,7 @@
 ; CT60), ou flux brut sur le port série (modem WiFi, passerelle PC, essais sous Hatari).
 ; Réglages dans SCRCT60.INF, après la première ligne :
 ;   nom = pseudo        salle = code (vide : premier joueur disponible)
-;   relais = adresse[:port] (vide : serveur officiel)    transport = sting | serie
+;   relais = adresse[:port] (vide : serveur officiel)    transport = sting | serie | fichiers
 ;   modem = commande envoyée au modem (transport série, ex. ATDT relais.exemple:27420)
 ;   empreinte = empreinte du jeu (FNV-1a, écrite par scr_tool.py)
 ; ---------------------------------------------------------------------------
@@ -347,6 +347,77 @@ se_get:						; (p, n) : ce qui est déjà arrivé
 .out:	move.l	d3,d0
 	movem.l	(sp)+,d2-d4/a2-a3
 	rts
+; « transport = fichiers » : chaque octet passe en deux lettres A-P (4 bits chacune), autres
+; caractères ignorés. Hatari sous Windows ne relie le port série qu'à des fichiers, ouverts en mode
+; texte (fins de ligne réécrites, $1A = fin de fichier) : des lettres n'y craignent rien.
+; tools/pont_serie.py --fichiers fait l'autre bout.
+hx_send:					; (p, n) : octets envoyés
+	movem.l	d2-d4/a2-a3,-(sp)
+	move.l	20+4(sp),a3
+	move.l	20+8(sp),d4
+	moveq	#0,d3
+.l:	cmp.l	d4,d3
+	bhs.s	.out
+	move.w	#1,-(sp)
+	aux	$55e				; Bcostat(1) : sinon plus tard
+	addq.l	#2,sp
+	tst.w	d0
+	beq.s	.out
+	moveq	#0,d0
+	move.b	(a3,d3.l),d0
+	lsr.b	#4,d0
+	bsr.s	.put
+	moveq	#15,d0
+	and.b	(a3,d3.l),d0
+	bsr.s	.put
+	addq.l	#1,d3
+	bra.s	.l
+.out:	move.l	d3,d0
+	movem.l	(sp)+,d2-d4/a2-a3
+	rts
+.put:	add.w	#'A',d0				; lettre (attend la place)
+	move.w	d0,-(sp)
+.w:	move.w	#1,-(sp)
+	aux	$55e
+	addq.l	#2,sp
+	tst.w	d0
+	beq.s	.w
+	move.w	#1,-(sp)
+	aux	$57e				; Bconout(1, lettre)
+	addq.l	#4,sp
+	rts
+hx_get:						; (p, n) : octets reçus en entier
+	movem.l	d2-d4/a2-a3,-(sp)
+	move.l	20+4(sp),a3
+	move.l	20+8(sp),d4
+	moveq	#0,d3
+.l:	cmp.l	d4,d3
+	bhs.s	.out
+	move.w	#1,-(sp)
+	aux	$51e				; Bconstat(1)
+	addq.l	#2,sp
+	tst.w	d0
+	beq.s	.out
+	move.w	#1,-(sp)
+	aux	$53e				; Bconin(1)
+	addq.l	#2,sp
+	sub.b	#'A',d0
+	cmp.b	#15,d0
+	bhi.s	.l				; pas une lettre A-P : ignoré
+	and.w	#15,d0
+	move.w	hx_half,d1
+	bpl.s	.lo
+	move.w	d0,hx_half			; 4 bits forts : en attente
+	bra.s	.l
+.lo:	lsl.w	#4,d1
+	or.w	d0,d1
+	move.b	d1,(a3,d3.l)
+	move.w	#-1,hx_half
+	addq.l	#1,d3
+	bra.s	.l
+.out:	move.l	d3,d0
+	movem.l	(sp)+,d2-d4/a2-a3
+	rts
 io_ms:	move.l	$4ba.w,d0			; horloge 200 Hz -> millisecondes
 	mulu.l	#5,d0
 	rts
@@ -425,14 +496,23 @@ net_setup:
 .cre:	clr.b	(a1)
 ; transport : STinG (défaut) ou port série
 .tr:	lea	net_io,a0
-	cmp.b	#'s',cfg_transport		; « serie »
+	cmp.b	#'f',cfg_transport		; « fichiers » : port série en lettres A-P
+	bne.s	.se				; (Hatari sous Windows, voir hx_send)
+	cmp.b	#'i',cfg_transport+1
+	bne.s	.se
+	move.w	#-1,hx_half
+	move.l	#hx_send,(a0)+
+	move.l	#se_avail,(a0)+
+	move.l	#hx_get,(a0)+
+	bra.s	.se2
+.se:	cmp.b	#'s',cfg_transport		; « serie »
 	bne.s	.st
 	cmp.b	#'e',cfg_transport+1
 	bne.s	.st
-	move.w	#1,net_serial
 	move.l	#se_send,(a0)+
 	move.l	#se_avail,(a0)+
 	move.l	#se_get,(a0)+
+.se2:	move.w	#1,net_serial
 	move.l	#io_ms,(a0)
 	move.w	#-1,-(sp)			; Rsconf : 19200 bauds, pas de contrôle de flux
 	move.w	#-1,-(sp)
@@ -939,6 +1019,7 @@ net_rel:	include	"../net/netrel.s"
 	bss
 net_on:		ds.w	1			; relié à l'adversaire
 net_serial:	ds.w	1
+hx_half:	ds.w	1			; transport fichiers : 4 bits forts reçus (-1 : aucun)
 net_online:	ds.b	1			; 4e choix du menu de départ
 net_reject:	ds.b	1
 txt_start:	ds.b	1

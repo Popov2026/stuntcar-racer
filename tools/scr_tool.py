@@ -492,6 +492,7 @@ CT60_INF = (b'\r\n'
             b';   relais = adresse:port   (sinon serveur officiel)\r\n'
             b';   transport = sting       (carte reseau : STinG ou GlueSTiK sous MiNT)\r\n'
             b';   transport = serie       (port serie : modem WiFi, passerelle PC)\r\n'
+            b';   transport = fichiers    (Hatari sous Windows, avec pont_serie.py)\r\n'
             b';   modem = commande        (port serie : envoyee avant, puis attente de CONNECT)\r\n'
             b'nom = Falcon\r\n')
 

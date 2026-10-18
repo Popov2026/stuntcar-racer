@@ -197,6 +197,8 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                               GlueSTiK sous MiNT (cookie STiK), configurés et connectés
     transport = serie         flux brut sur le port série (modem WiFi, passerelle PC)
     modem = ATDT relais:27420 (port série) commande envoyée, puis attente de CONNECT
+    transport = fichiers      Hatari sous Windows : port série par deux fichiers et
+                              tools/pont_serie.py (chaque octet en deux lettres A-P)
 
   Au lancement (carte réseau), SCRCT60 vérifie STinG, cherche l'adresse du relais et essaie
   une connexion ; il affiche « serveur joignable », ou ce qui ne va pas (STinG absent,
@@ -221,6 +223,14 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
                 --monitor vga --scc-b-in /tmp/scr_falcon_serie \
                 --scc-b-out /tmp/scr_falcon_serie SCR/SCRCT60.TOS
     4. dans le jeu : « 4. Online Multiplayer » (« Linking » jusqu'à l'arrivée d'un adversaire)
+  Hatari sous Windows (Hatari 2.5 ou plus, comme sous Linux) : il n'y relie le port série
+  qu'à des fichiers (ouverts en mode texte).
+    1. dans SCR/SCRCT60.INF :   transport = fichiers
+    2. dans le dossier de Hatari :   python pont_serie.py --fichiers
+       (crée scr_entree.txt et scr_sortie.txt ; à relancer avant chaque lancement de Hatari)
+    3. hatari --machine falcon --cpulevel 6 --fpu internal --addr24 off --ttram 64
+              --monitor vga --scc-b-in scr_entree.txt --scc-b-out scr_sortie.txt
+              SCR\SCRCT60.TOS
   L'adversaire : la version PC v45, « 4. Online Multiplayer » puis « Premier joueur
   disponible » (ou une salle privée, avec le même code que « salle = » côté Falcon), ou un
   autre Falcon. Le pont affiche la connexion au serveur et sa fermeture.
