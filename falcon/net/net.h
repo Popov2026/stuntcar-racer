@@ -32,6 +32,7 @@ struct net {
 	char text[64];		/* +84 : état en clair */
 	/* privé */
 	u32 last_rx;
+	u32 last_keep;		/* attente d'un adversaire : signe de vie au relais */
 	s32 picked;
 	s32 olen, ilen, dlen, rhead, rtail;
 	u8 obuf[1024], ibuf[2048], dbuf[64], rx[RXSIZE];

@@ -185,7 +185,7 @@ int net_start(struct net *n) {
 	N = n;
 	n->state = NS_JOINING; n->olen = n->ilen = n->dlen = 0; n->rhead = n->rtail = 0;
 	n->master = 0; n->picked = 0; n->params_ok = 1; n->peer[0] = 0;
-	n->last_rx = n->io->ms();
+	n->last_rx = n->last_keep = n->io->ms();
 	u8 j[96];
 	int k = 0, i;
 	const char *mode = n->room[0] ? "SALLE" : "AUTO";
@@ -209,6 +209,14 @@ int net_poll(void) {
 	flush_data();
 	flush();
 	if (N->state == NS_JOINING && N->io->ms() - N->last_rx > 20000) fail("pas de reponse du serveur relais");
+	/* en attente d'un adversaire : le relais ignore une trame PING, mais la compte comme signe de
+	 * vie (sinon, à l'appariement, il coupe qui n'a rien envoyé depuis 90 s) */
+	if (N->state == NS_WAITING && N->io->ms() - N->last_keep > 20000) {
+		u8 z[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+		frame(NF_PING, z, 8);
+		flush();
+		N->last_keep = N->io->ms();
+	}
 	return N->state;
 }
 

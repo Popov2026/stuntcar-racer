@@ -210,6 +210,21 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
   « Link abandoned » et le retour au menu. La physique est celle du jeu d'origine : un
   serveur qui en impose une autre est refusé.
 
+  Jouer en ligne sous Hatari (Linux, macOS) : Hatari n'émule pas de carte réseau, on passe
+  donc par le port série du Falcon, relié au serveur par tools/pont_serie.py (Python 3) :
+    1. dans SCR/SCRCT60.INF, ajouter la ligne   transport = serie
+    2. lancer le pont (il reste ouvert ; Ctrl+C pour l'arrêter) :
+         python3 tools/pont_serie.py               (serveur officiel)
+         python3 tools/pont_serie.py --relais adresse:port
+    3. lancer Hatari avec ce port série (même chemin en entrée et en sortie) :
+         hatari --machine falcon --cpulevel 6 --fpu internal --addr24 off --ttram 64 \
+                --monitor vga --scc-b-in /tmp/scr_falcon_serie \
+                --scc-b-out /tmp/scr_falcon_serie SCR/SCRCT60.TOS
+    4. dans le jeu : « 4. Online Multiplayer » (« Linking » jusqu'à l'arrivée d'un adversaire)
+  L'adversaire : la version PC v45, « 4. Online Multiplayer » puis « Premier joueur
+  disponible » (ou une salle privée, avec le même code que « salle = » côté Falcon), ou un
+  autre Falcon. Le pont affiche la connexion au serveur et sa fermeture.
+
   Les octets du câble partent dans des trames du protocole de la version PC (module C
   falcon/net/net.c, relogé dans le lanceur). Le jeu attend chaque octet quelques tests
   seulement, par des boucles de calcul calibrées pour un 68000 à 8 MHz : sur 68060, en

@@ -1,11 +1,12 @@
 ; netrel.s - produit par mkblob.py : mots longs de net.bin à reloger (+ adresse de net.bin)
 	dc.l	$1c,$48,$86,$98,$e2,$13c,$162,$1a6
-	dc.l	$1ee,$286,$2bc,$2ee,$31c,$354,$380,$3b0
-	dc.l	$3ca,$3fa,$40a,$492,$4de,$4ee,$4f4,$526
-	dc.l	$572,$59a,$5b0,$5fa,$628,$636,$652,$70a
-	dc.l	$716,$72c,$73e,$77a,$7ea,$810,$8d2,$908
-	dc.l	$94a,$962,$9ac,$9c2,$a0a,$a22,$a2c,$a5e
-	dc.l	$ab0,$aec,$b18,$b2e,$b5a,$b80,$ba2,$bdc
-	dc.l	$bfe,$c2c,$c40,$c58,$d2a,$da2,$dc6,$df6
-	dc.l	$e10,$e32,$e6c,$ece,$ef2
+	dc.l	$1f2,$28a,$2c0,$2f2,$320,$35a,$386,$3b8
+	dc.l	$3d6,$406,$41a,$434,$458,$48a,$528,$588
+	dc.l	$59a,$5a0,$5dc,$62e,$660,$67c,$6ce,$702
+	dc.l	$710,$72c,$7fa,$806,$81c,$834,$874,$8fa
+	dc.l	$920,$9f6,$a2c,$a6e,$a92,$aae,$b02,$b1e
+	dc.l	$b2a,$b68,$bc2,$bd4,$c06,$c4a,$c7a,$c96
+	dc.l	$cc6,$cf2,$d1c,$d5a,$d84,$dba,$dce,$dea
+	dc.l	$ed2,$f5c,$f80,$fb0,$fca,$fec,$1026,$1088
+	dc.l	$10ac
 	dc.l	-1

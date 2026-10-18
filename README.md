@@ -106,6 +106,8 @@ Sur le Falcon : `SCRF030.PRG` à côté de `GAME.PUT`, ou démarrer sur `SCR_F03
 Sur CT60, `SCRCT60.PRG` ajoute au menu du jeu « 4. Online Multiplayer », comme la version PC :
 partie en ligne par le serveur relais v45 (carte réseau par STinG, ou port série) ; « 3. Computer
 Link » reste le câble null modem.
+Sous Hatari (pas de carte réseau émulée) : `transport = serie` et `python3 tools/pont_serie.py`
+(détails dans `falcon/LISEZMOI.txt`, section 5).
 Détails : `falcon/LISEZMOI.txt` et `docs/FALCON030.md`.
 
 ## Lancer la réplique (navigateur)
