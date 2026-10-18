@@ -127,6 +127,9 @@ TPL_CNGETBLOCK	equ	88
 TPL_RESOLVE	equ	96
 E_NODATA	equ	-2
 E_OBUFFULL	equ	-1
+E_USERTIMEOUT	equ	-15
+E_CNTIMEOUT	equ	-16
+TPL_ERRTEXT	equ	28
 
 ; d0 = 0 si STinG est là (tpl posé), sinon -1 (superviseur)
 sting_find:
@@ -154,9 +157,10 @@ sting_find:
 .tname:	dc.b	"TRANSPORT_TCPIP",0
 	even
 
-; nom ou adresse (net_host) -> connexion TCP sur net_port ; d0 = 0 si établie
-sting_open:
-	movem.l	d2-d7/a2-a6,-(sp)
+; nom ou adresse (net_host) -> net_ip ; d0 = 0 si trouvée, sinon code d'erreur STinG (< 0).
+; Au lancement, dans le contexte normal du TOS (la résolution peut attendre le serveur DNS)
+sting_resolve:
+	movem.l	d1-d7/a0-a6,-(sp)
 	move.l	sting_tpl,a5
 	move.w	#1,-(sp)			; resolve(nom, NULL, &adresse, 1)
 	pea	net_ip
@@ -165,8 +169,23 @@ sting_open:
 	move.l	TPL_RESOLVE(a5),a0
 	jsr	(a0)
 	lea	14(sp),sp
-	tst.w	d0
-	ble.s	.err
+	ext.l	d0
+	bgt.s	.ok
+	tst.l	d0
+	bmi.s	.out
+	moveq	#-1,d0				; aucune adresse
+	bra.s	.out
+.ok:	moveq	#0,d0
+.out:	movem.l	(sp)+,d1-d7/a0-a6
+	rts
+
+; connexion TCP vers net_ip:net_port, attente par tranches d'une seconde, 15 s au plus ;
+; d1 = 0 : sans Échap (lancement), sinon Échap du jeu. d0 = 0 si établie (sting_cn), sinon
+; code d'erreur STinG (< 0), connexion refermée
+sting_connect:
+	movem.l	d1-d7/a0-a6,-(sp)
+	move.l	d1,d6
+	move.l	sting_tpl,a5
 	move.w	#2048,-(sp)			; TCP_open(adresse, port, 0, 2048)
 	clr.w	-(sp)
 	move.w	net_port,-(sp)
@@ -174,21 +193,33 @@ sting_open:
 	move.l	TPL_TCP_OPEN(a5),a0
 	jsr	(a0)
 	lea	10(sp),sp
-	tst.w	d0
-	bmi.s	.err
+	ext.l	d0
+	bmi.s	.out
 	move.w	d0,sting_cn
-	move.w	#20,-(sp)			; TCP_wait_state(cn, TESTABLISH, 20 s)
+	moveq	#15-1,d7
+.w:	move.w	#1,-(sp)			; TCP_wait_state(cn, TESTABLISH, 1 s)
 	move.w	#4,-(sp)
 	move.w	sting_cn,-(sp)
 	move.l	TPL_TCP_WAIT(a5),a0
 	jsr	(a0)
 	addq.l	#6,sp
-	tst.w	d0
+	ext.l	d0
+	beq.s	.out
+	cmp.w	#E_CNTIMEOUT,d0			; pas encore : on continue
+	beq.s	.t
+	cmp.w	#E_USERTIMEOUT,d0
 	bne.s	.err
-	moveq	#0,d0
-	bra.s	.out
-.err:	moveq	#-1,d0
-.out:	movem.l	(sp)+,d2-d7/a2-a6
+.t:
+	tst.l	d6
+	beq.s	.n
+	move.l	game_base,a0
+	cmp.b	#$b3,G_KEYS+1(a0)		; Échap
+	beq.s	.err
+.n:	dbf	d7,.w
+.err:	move.l	d0,-(sp)
+	bsr	sting_close
+	move.l	(sp)+,d0
+.out:	movem.l	(sp)+,d1-d7/a0-a6
 	rts
 
 ; fonctions du transport pour le module C (convention gcc : arguments 32 bits, d2-d7/a2-a6 gardés)
@@ -417,6 +448,7 @@ net_setup:
 	move.l	#st_avail,(a0)+
 	move.l	#st_get,(a0)+
 	move.l	#io_ms,(a0)
+	bsr	net_probe
 .out:	movem.l	(sp)+,d0-d2/a0-a2/a6
 	rts
 .cpy:	move.b	(a0)+,(a1)+
@@ -444,6 +476,65 @@ net_setup:
 .offi:	dc.b	$37,$06,$07,$e2,$ef,$e9,$c9,$d1,$a7,$e1,$bf,$8a
 	even
 
+; essai au lancement (carte réseau) : STinG, adresse du relais, connexion TCP ; message à l'écran.
+; La connexion n'est gardée : la partie en ligne se connecte au choix « 4. Online Multiplayer »
+net_probe:
+	movem.l	d0-d7/a0-a6,-(sp)
+	lea	txt_on1(pc),a0
+	bsr	print
+	tst.l	sting_tpl
+	bne.s	.s1
+	lea	txt_on_nost(pc),a0
+	bra	.bad
+.s1:	lea	txt_on_srv(pc),a0
+	bsr	print
+	lea	txt_on_off(pc),a0		; serveur officiel : adresse jamais affichée
+	tst.b	cfg_relay
+	beq.s	.s2
+	lea	cfg_relay,a0
+.s2:	bsr	print
+	lea	txt_crlf(pc),a0
+	bsr	print
+	bsr	sting_resolve
+	tst.l	d0
+	beq.s	.s3
+	lea	txt_on_dns(pc),a0
+	bra.s	.err
+.s3:	moveq	#0,d1
+	bsr	sting_connect
+	tst.l	d0
+	beq.s	.s4
+	clr.l	net_ip				; plus d'essai dans le jeu (Link abandoned)
+	lea	txt_on_tcp(pc),a0
+	bra.s	.err
+.s4:	bsr	sting_close			; joignable : refermée
+	lea	txt_on_ok(pc),a0
+	bsr	print
+	moveq	#50-1,d7			; 1 s pour lire
+	bra.s	.wt
+.err:	move.l	d0,d6				; message, puis texte d'erreur de STinG
+	bsr	print
+	move.l	sting_tpl,a5
+	move.w	d6,-(sp)
+	move.l	TPL_ERRTEXT(a5),a0
+	jsr	(a0)				; get_err_text(code)
+	addq.l	#2,sp
+	move.l	d0,a0
+	tst.l	d0
+	beq.s	.e1
+	bsr	print
+.e1:	lea	txt_crlf(pc),a0
+.bad:	bsr	print
+	lea	txt_on_ko(pc),a0
+	bsr	print
+	move.w	#150-1,d7			; 3 s pour lire
+.wt:	move.w	#37,-(sp)			; Vsync
+	trap	#14
+	addq.l	#2,sp
+	dbf	d7,.wt
+	movem.l	(sp)+,d0-d7/a0-a6
+	rts
+
 ; --------------------------------------------------------------- connexion (« 4. Online Multiplayer »)
 ; appelée au test maître / esclave du Computer Link ($453EC), pendant que le jeu affiche
 ; « Linking » ; superviseur. Relais (STinG ou modem), inscription, attente d'un adversaire,
@@ -456,7 +547,13 @@ net_open:
 	bne.s	.ser
 	tst.l	sting_tpl			; carte réseau : STinG (ou GlueSTiK)
 	beq	.no
-	bsr	sting_open
+	tst.l	net_ip				; adresse trouvée au lancement
+	beq	.no
+	move.w	sr,-(sp)			; interruptions permises pendant l'attente (le
+	and.w	#$f8ff,sr			; jeu peut les avoir masquées) : STinG avance
+	moveq	#1,d1				; avec Échap
+	bsr	sting_connect
+	move.w	(sp)+,sr
 	tst.l	d0
 	bne	.no
 	move.w	#1,net_sting
@@ -815,6 +912,23 @@ net_vbl:
 	data
 txt_online:
 	dc.b	"Online Multiplayer",$ff
+	even
+txt_on1:
+	dc.b	"4. Online Multiplayer (relais v45) : ",0
+txt_on_nost:
+	dc.b	"STinG absent (cookie STiK).",13,10,0
+txt_on_srv:
+	dc.b	"carte reseau (STinG)",13,10,"  serveur : ",0
+txt_on_off:
+	dc.b	"serveur officiel",0
+txt_on_dns:
+	dc.b	"  adresse du serveur introuvable (DNS de STinG ?) : ",0
+txt_on_tcp:
+	dc.b	"  connexion au serveur impossible : ",0
+txt_on_ok:
+	dc.b	"  serveur joignable.",13,10,0
+txt_on_ko:
+	dc.b	"  (le jeu en ligne donnera Link abandoned)",13,10,0
 	even
 	section	netblob,data
 net_blob:	incbin	"../net/net.bin"

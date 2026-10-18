@@ -198,6 +198,11 @@ le Falcon pour qu'il s'y comporte comme un Atari ST.
     transport = serie         flux brut sur le port série (modem WiFi, passerelle PC)
     modem = ATDT relais:27420 (port série) commande envoyée, puis attente de CONNECT
 
+  Au lancement (carte réseau), SCRCT60 vérifie STinG, cherche l'adresse du relais et essaie
+  une connexion ; il affiche « serveur joignable », ou ce qui ne va pas (STinG absent,
+  adresse introuvable : DNS de STinG à régler, connexion impossible) avec le message
+  d'erreur de STinG. Dans ce cas, « 4. Online Multiplayer » donne « Link abandoned ».
+
   En choisissant « 4. Online Multiplayer », le jeu affiche « Linking » : SCRCT60 ouvre la
   connexion, s'inscrit au relais, attend un adversaire et vérifie la poignée de main
   (version v45, même jeu). Le premier inscrit est le maître : il saisit les pilotes et
