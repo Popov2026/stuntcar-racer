@@ -1,6 +1,6 @@
-## Stunt Car Racer v72 : serveur officiel joint par le port 443
+## Stunt Car Racer v72 : nouvelle connexion au serveur officiel
 
-- Le jeu joint le serveur relais officiel par le port TCP 443 (reverse proxy). Une adresse de relais donnée dans `scr.ini` reste prioritaire.
+- Le jeu joint le serveur relais officiel par un nouveau chemin. Une adresse de relais donnée dans `scr.ini` reste prioritaire.
 - Comprend les nouveautés de la v71 : les robots d'Internet sont écartés du serveur relais sans apparaître dans le tableau ni le journal.
 - Jeu et serveur relais en v72 (mettre les deux à jour).
 
