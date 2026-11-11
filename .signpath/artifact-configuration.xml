@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configuration d'artefact SignPath (à coller dans le projet sur app.signpath.io) : l'artefact
+     GitHub est un zip qui contient les deux zips de la release ; les .exe y sont signés. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <zip-file path="StuntCarRacer-win64-*.zip">
+      <directory path="StuntCarRacer">
+        <pe-file path="scr.exe"><authenticode-sign/></pe-file>
+        <pe-file path="scr_headless.exe"><authenticode-sign/></pe-file>
+        <directory path="serveur">
+          <pe-file path="scr_relay.exe"><authenticode-sign/></pe-file>
+        </directory>
+      </directory>
+    </zip-file>
+    <zip-file path="ServeurRelaisStuntCar-*.zip">
+      <directory path="ServeurRelaisStuntCar">
+        <pe-file path="scr_relay.exe"><authenticode-sign/></pe-file>
+      </directory>
+    </zip-file>
+  </zip-file>
+</artifact-configuration>
