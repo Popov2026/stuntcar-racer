@@ -45,6 +45,9 @@ static bool loadImage(const fs::path &p, HdImage &img, bool &hasAlpha) {
 int HdAssets::load(const std::string &dir) {
   sprites_.clear();
   report.clear();
+  cockpit = HdImage();
+  cockpitFront = HdImage();
+  cockpitBack = HdImage();
   std::error_code ec;
   fs::path base = fs::u8path(dir);
   if (!fs::is_directory(base, ec)) return 0;
@@ -55,6 +58,27 @@ int HdAssets::load(const std::string &dir) {
     std::smatch mm;
     std::string name = e.path().filename().u8string();
     if (std::regex_match(name, mm, re)) files[std::atoi(mm[1].str().c_str())][mm[2].matched ? std::atoi(mm[2].str().c_str()) : 0] = e.path();
+  }
+  for (const char *n : {"cockpit.png", "cockpit.jpg", "cockpit.jpeg"}) {   // cockpit fixe
+    bool a;
+    if (fs::exists(base / n, ec) && cockpit.px.empty()) {
+      if (loadImage(base / n, cockpit, a)) report += std::string("cockpit : ") + n + " (" + std::to_string(cockpit.w) + "x" + std::to_string(cockpit.h) + ")\n";
+      else report += std::string("illisible : ") + n + "\n";
+    }
+  }
+  for (const char *n : {"cockpit_avant.png", "cockpit_avant.jpg"}) {   // partie du cockpit devant les roues
+    bool a;
+    if (fs::exists(base / n, ec) && cockpitFront.px.empty()) {
+      if (loadImage(base / n, cockpitFront, a)) report += std::string("cockpit (avant) : ") + n + "\n";
+      else report += std::string("illisible : ") + n + "\n";
+    }
+  }
+  for (const char *n : {"cockpit_fond.png", "cockpit_fond.jpg"}) {   // fond sous les roues et le moteur
+    bool a;
+    if (fs::exists(base / n, ec) && cockpitBack.px.empty()) {
+      if (loadImage(base / n, cockpitBack, a)) report += std::string("cockpit (fond) : ") + n + "\n";
+      else report += std::string("illisible : ") + n + "\n";
+    }
   }
   std::map<int, bool> alpha;
   for (auto &[id, fr] : files) {
@@ -68,6 +92,10 @@ int HdAssets::load(const std::string &dir) {
     }
     if (s.frames.empty() || id < 0 || id > 255) continue;
     s.additive = !anyAlpha;
+    // moteur (10) et bas des gros tuyaux (11, 12) sur les roues, flammes sur le moteur
+    // roues (0-5) et pièces des roues (37-48) sous le cockpit
+    s.layer = id == 10 || id == 11 || id == 12 ? 1 : (id == 6 || id == 7 || id == 8 || id == 9 || id == 49 || id == 50) ? 2
+              : id <= 5 || (id >= 37 && id <= 48) ? -1 : 0;
     sprites_[id] = std::move(s);
   }
   // réglages
@@ -97,6 +125,11 @@ int HdAssets::load(const std::string &dir) {
     else if (k == "dy") s.dy = d;
     else if (k == "fps" && d > 0) s.fps = d;
     else if (k == "wind") s.wind = d;
+    else if (k == "pad_top" || k == "padT") s.padT = std::clamp(d, 0.0, 4.0);
+    else if (k == "pad_bottom" || k == "padB") s.padB = std::clamp(d, 0.0, 4.0);
+    else if (k == "pad_left" || k == "padL") s.padL = std::clamp(d, 0.0, 4.0);
+    else if (k == "pad_right" || k == "padR") s.padR = std::clamp(d, 0.0, 4.0);
+    else if (k == "layer") s.layer = int(d);
     else if (k == "anchor") s.anchor = v == "top" ? 0 : v == "center" ? 2 : 1;
   }
   for (auto &[id, s] : sprites_)

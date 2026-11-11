@@ -2,6 +2,7 @@
 // tampon de profondeur (1/z), découpage au plan proche, répartition par bandes sur plusieurs cœurs.
 #pragma once
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace scr {
@@ -18,28 +19,84 @@ struct Camera {
   double nearZ = 4;
 };
 
+// textures procédurales (mode détails élevés) : calculées au pixel à partir du point du monde touché
+enum TexKind { TEX_NONE = -1, TEX_GROUND = 0, TEX_ROAD, TEX_WALL, TEX_PAINT, TEX_TIRE, TEX_RIM, TEX_CROWD, TEX_BOARD,
+               TEX_ENGINE, TEX_GLASS };   // moteur vu du dessus, pare-brise (voitures en détails élevés)
+struct TexInfo {
+  int kind = TEX_NONE;
+  Vec3 o{0, 0, 0}, u{1, 0, 0}, v{0, 0, 1};   // repère local (origine, axes unitaires)
+  double s0 = 0, s1 = 1, w0 = 0, w1 = 1;     // étendue de la face dans ce repère (peinture : joints)
+  double r = 1;                              // rayon (roue)
+  double blur = 0;                           // roue : angle parcouru pendant l'image (flou de mouvement), radians
+  double contrast = 1;                       // roue : netteté du motif (baisse à grande vitesse)
+};
+
+class Renderer3D;
+// moteur sur la carte graphique (OpenGL) : dessine à la place de finish() la liste de polygones
+// préparée par Renderer3D ; renvoie faux en cas d'échec (le rendu se fait alors sur le processeur)
+class GpuBackend {
+ public:
+  virtual ~GpuBackend() = default;
+  virtual bool render(const Renderer3D &r, uint32_t *out) = 0;
+};
+
 class Renderer3D {
  public:
+  friend class Gpu3D;
+  // moteur OpenGL utilisé par tous les rendus (nullptr : processeur)
+  static void setGpu(GpuBackend *g) { gpu_ = g; }
+  static GpuBackend *gpu() { return gpu_; }
+  // textures de bruit (niveaux de mip-map, 256×256 au niveau 0) : 0 sol (grandes plaques), 1 sol
+  // (détail), 2 route, 3 murs, 4 nuages
+  static const std::vector<std::vector<float>> &mipLevels(int which);
   Renderer3D();
   void begin(int W, int H, const Camera &cam, uint32_t background);
-  // polygone convexe en coordonnées monde (3 à 8 sommets)
+  // polygone convexe en coordonnées monde (3 à 32 sommets)
   void poly(const Vec3 *pts, int n, uint32_t color);
+  // polygone texturé : la couleur de base est modulée par la texture procédurale
+  void polyTex(const Vec3 *pts, int n, uint32_t color, const TexInfo &t);
+  // sol lointain texturé (plan horizontal y = h)
+  void polyFarTex(const Vec3 *pts, int n, uint32_t color, float depth, const TexInfo &t, double h);
   // pour le décor lointain (sol, collines) : profondeur fixée au plus loin
   void polyFar(const Vec3 *pts, int n, uint32_t color, float depth);
+  // polygone semi-transparent (ombres, fumée) : dessiné après les surfaces opaques, testé contre leur
+  // profondeur sans l'écrire, mélangé à alpha (0 à 1) dans l'ordre d'envoi
+  void polyAlpha(const Vec3 *pts, int n, uint32_t color, float alpha);
+  // lissage des bords (anticrénelage de type FXAA) appliqué à l'image à la fin de finish()
+  void setAntialias(bool on) { aa_ = on; }
+  // ciel (là où rien n'est dessiné) : dégradé de l'horizon au zénith à partir de la couleur de base,
+  // soleil et nuages qui dérivent (t en secondes) ; sinon couleur unie de begin()
+  void setSky(bool on, uint32_t base, double t) { sky_ = on; skyBase_ = base; skyT_ = t; }
   void finish(uint32_t *out);   // rastérisation (multi-cœurs) dans out (W×H ARGB)
   int threads() const { return threads_; }
+  static void warmTextures();   // précalcule les textures (sinon au premier rendu détaillé)
   // repère caméra
   Vec3 toCam(const Vec3 &p) const;
 
  private:
-  struct SPoly { int first, n; uint32_t color; float ia, ib, ic; float ymin, ymax; float fixedDepth; };
-  void addClipped(const Vec3 *cam, int n, uint32_t color, float fixedDepth);
-  void rasterBand(uint32_t *out, int y0, int y1);
+  struct SPoly { int first, n; uint32_t color; float ia, ib, ic; float ymin, ymax; float fixedDepth; int tex; float alpha; int cfirst, cn; };
+  std::vector<Vec3> cv_;   // sommets découpés au plan proche, repère caméra (moteur OpenGL)
+  static inline GpuBackend *gpu_ = nullptr;
+  struct TexPlane { TexInfo t; Vec3 n; double d; };   // plan du polygone dans le monde : n·p = d
+  void addClipped(const Vec3 *cam, int n, uint32_t color, float fixedDepth, int tex = -1, float alpha = 1.f);
+  void fxaaBand(const uint32_t *src, int k, int n);
+  bool aa_ = false;
+  std::vector<std::vector<std::pair<size_t, uint32_t>>> aaFix_;   // pixels lissés, par fil de calcul
+  std::vector<SPoly> trans_;   // polygones semi-transparents
+  int addTex(const TexInfo &t, const Vec3 &n, double d);
+  uint32_t shade(const TexPlane &tp, uint32_t color, const Vec3 &p, double foot) const;
+  double M_[3][3];   // monde -> caméra (rotation)
+  std::vector<TexPlane> texs_;
+  void rasterBand(uint32_t *out, int k, int n);   // lignes y ≡ k (mod n)
+  void shadeBand(uint32_t *out, int k, int n);    // ombrage différé des surfaces texturées
+  void skyBand(uint32_t *out, int k, int n);      // ciel des pixels vides
+  bool sky_ = false; uint32_t skyBase_ = 0; double skyT_ = 0;
   int W_ = 0, H_ = 0, threads_ = 1;
   Camera cam_;
   double cyw_, syw_, cp_, sp_, cr_, sr_;
   uint32_t bg_ = 0;
   std::vector<float> zbuf_;
+  std::vector<int32_t> idbuf_;        // surface texturée visible par pixel (-1 : couleur unie)
   std::vector<float> sx_, sy_;        // sommets projetés
   std::vector<SPoly> polys_;
 };

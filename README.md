@@ -52,7 +52,34 @@ in JavaScript and a fully adjustable remake), `tools/` (disk extraction, decompr
 decoding, test emulator, disassembler), `docs/` (formats, addresses, decompiled routines),
 `falcon/` (Atari Falcon030 / CT60 version). The detailed documentation below is in French.
 
+**License:** MIT (see `LICENSE`) for the code of this repository; the original game is not included.
+
+### Code signing policy
+
+Windows releases are built from this repository by GitHub Actions (`.github/workflows/build.yml`,
+script `native/build_release.sh`); nothing built elsewhere is published.
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org) (once the project is accepted and configured).
+
+* Committers and reviewers: [Popov2026](https://github.com/Popov2026)
+* Approvers: [Popov2026](https://github.com/Popov2026)
+
+**Privacy policy:** the game connects to a network service only for online multiplayer: at start-up
+and in the "Online Multiplayer" menu it asks the relay server (the official one, or the one set in
+`scr.ini`) which version is current; during online play it sends the nickname chosen by the player,
+the game version, the car positions and the chat messages, which the relay forwards to the other
+players (nicknames and rooms also appear on the server's status page). No account, no personal
+data, nothing else is sent. The relay server (`scr_relay`) keeps a log of connections (IP address,
+nickname) on the machine that runs it. Local network play (Computer Link) talks only to the other PC.
+
 ---
+
+## Licence et signature des programmes
+
+Code du dépôt sous licence **MIT** (`LICENSE`) ; le jeu d'origine n'est pas inclus. Les releases
+Windows sont compilées à partir du dépôt par GitHub Actions (`native/build_release.sh`) et signées
+gratuitement par SignPath Foundation dès que le projet y est accepté (voir *Code signing policy* plus
+haut, avec la déclaration de confidentialité : seul le multijoueur en ligne contacte le serveur relais).
 
 ## Contenu
 

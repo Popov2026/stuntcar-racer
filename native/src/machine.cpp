@@ -1,5 +1,6 @@
 // machine.cpp — voir machine.hpp.  Adresses : jeu chargé à $10100 (docs/RETRO_INGENIERIE.md).
 #include "machine.hpp"
+#include "tnt.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,7 +33,7 @@ static inline void markWrite(Machine *m, uint32_t a, uint32_t v, uint32_t pc, bo
   if (!changed && pc >= 0x567b0 && pc < 0x56880 && m->layers_[a] == Machine::W_OTHER) return;
   uint8_t cls = (pc >= 0x567b0 && pc < 0x56880) ? Machine::W_SPRITE
                 : m->inOpponent_                    ? Machine::W_OPPONENT
-                : scene                             ? Machine::W_SCENE
+                : scene && !m->inCrack_             ? Machine::W_SCENE
                                                     : Machine::W_OTHER;
   m->layers_[a] = cls;
   if (cls == Machine::W_SCENE) { m->layers_[Machine::RAMSIZE + a] = uint8_t(v); m->layers_[2 * Machine::RAMSIZE + a] = 1; }
@@ -41,7 +42,35 @@ static inline void markWrite(Machine *m, uint32_t a, uint32_t v, uint32_t pc, bo
 constexpr uint32_t A_JOYSTICK = 0x106a6, A_KEYS = 0x6f02c;
 constexpr uint32_t HLE = 0xffe00;                 // « ROM » : RTE en fin de RAM
 constexpr uint32_t HLE_GEMDOS = HLE + 0x10, HLE_XBIOS = HLE + 0x20, HLE_LINEA = HLE + 0x30, SENTINEL = HLE + 0x40;
+constexpr uint32_t HLE_BIOS = HLE + 0x50;   // trap #13
 constexpr uint32_t PARK = HLE + 0x70;               // bra.s * : instruction neutre pour s'arrêter
+constexpr uint32_t PARK_LINK = HLE + 0x74;          // bra.s * : jeu retenu à l'entrée du « Computer Link »
+constexpr uint32_t A_LINK = 0x453ec;                // « Computer Link » : test « octet reçu ? » qui décide maître / esclave
+                                                    // (après le vidage du tampon série de $453B6)
+// menus du jeu ($48D88 : D1 = menu, chaque menu a 4 entrées dans la table de textes $49218)
+constexpr uint32_t A_MENU = 0x48d88, A_MENU_END = 0x48ed0;   // entrée, retour (choix dans D0)
+constexpr uint32_t A_MENU_WAIT = 0x48ee6;   // attente d'un appui (bouton relâché)
+constexpr uint32_t A_MENU_SHOW = 0x48dc6;   // réaffiche le menu puis rend $109C0 si $109B4 (bouton) est posé
+constexpr uint32_t MENU_TEXTS = 0x49218, M_SEL = 0x109c0, M_FIRE = 0x109b4;
+constexpr uint8_t TXT_CANCEL = 0x55;        // « Cancel »
+// saisie du nom ($48B90 -> $48C26) : boucle de lecture des touches en $48C94, fin commune en $48C0E
+constexpr uint32_t A_NAME_INPUT = 0x48c26, A_NAME_KEY = 0x48c94, A_NAME_DONE = 0x48c0e;
+constexpr uint32_t A_SELECT = 0x4be28, A_DRIVERS = 0x4be62;   // menu « 1. Single Player League... », « Enter another driver »
+constexpr uint32_t RET_NAME_SINGLE = 0x4be5c, RET_NAME_MULTI = 0x4be88, DRIVER_COUNT = 0x4c0f2;
+// « Computer Link » : le maître saisit les pilotes ($45612 -> $48B90, retour $45618) ; nom en cours :
+// $13399 + $109BF (12 caractères au plus, $48D84) ; $48D74 complète avec des espaces et termine
+constexpr uint32_t RET_NAME_LINK = 0x45618, NAME_BUF = 0x13399, NAME_OFS = 0x109bf, A_NAME_PAD = 0x48d74;
+constexpr uint32_t RET_DRIVERS_MENU = 0x4be74;   // retour du menu « Enter another driver / Continue » (multijoueur)
+constexpr int MENU_DRIVERS = 0x14;
+// menu de départ (1. Single Player League / 2. Multiplayer / 3. Computer Link) : 4e choix
+// « Online Multiplayer » et libellés précisés. Textes de ce menu : octets de $4C0FB + D1 terminés
+// par $FF, affichés par $47BA0 -> boucle $47BC6 (A1 = $4C0FB rechargé à chaque caractère).
+constexpr uint32_t RET_SELECT_MENU = 0x4be4a, MENU_TABLE_SELECT = 0x49218 + 0x10;
+constexpr uint32_t A_PRINT = 0x47ba0, A_PRINT_LOOP = 0x47bc6, A_PRINT_READ = 0x47bcc, A_PRINT_END = 0x47bd8;
+constexpr uint32_t TEXT_BUF = HLE + 0x100;   // texte de remplacement (RAM libre en fin de mémoire)
+constexpr uint8_t TXT_MULTI = 0x1f, TXT_LINK = 0x71, TXT_ONLINE = 0xf0;   // 0xF0 : 4e entrée ajoutée
+constexpr int MENU_SELECT = 0x10;
+constexpr int MENU_TRACKS = 0x18, MENU_PRACTISE = 0x1c;   // « Tracks in DIVISION n » puis « Practise The ... / Cancel »
 constexpr uint32_t SCREEN = 0xf8000;
 constexpr uint32_t CYCLES_PER_FRAME = 160256;     // 8 MHz, 50 Hz PAL
 const uint32_t DT_SITES[] = {0x48a08, 0x4efaa, 0x4efc6, 0x4efe2, 0x4f014, 0x4f02c, 0x4f044, 0x4f136, 0x4f14e, 0x4f166,
@@ -159,8 +188,12 @@ void Machine::overlayARGB(uint32_t *out, std::vector<SpriteDraw> *visible) const
     int x = i % 320, y = i / 320;
     return y < 16 || (y < 150 ? (x < 32 || x >= 288) : (x < 16 || x >= 304));
   };
+  // le noir n'est « vitre » que dans les coins hors de l'arceau : les encoches noires du haut du cadre
+  // (entre les rivets) restent opaques
   auto seed = [&](int i) {
-    if (!clear[i] && outside(i) && cls[i] != W_SCENE && (idx[i] == 7 || idx[i] == 0)) { clear[i] = 1; st.push_back(i); }
+    int x = i % 320;
+    bool blackOk = idx[i] == 0 && (x < 36 || x >= 284);
+    if (!clear[i] && outside(i) && cls[i] != W_SCENE && (idx[i] == 7 || blackOk)) { clear[i] = 1; st.push_back(i); }
   };
   for (int x = 0; x < 320; x++) seed(x);
   for (int y = 0; y < 200; y++) { seed(y * 320); seed(y * 320 + 319); }
@@ -179,7 +212,8 @@ void Machine::overlayARGB(uint32_t *out, std::vector<SpriteDraw> *visible) const
   std::memset(sprMask, 0, sizeof sprMask);
   uint32_t vb = vbase();
   std::vector<int> spx;
-  std::vector<std::pair<size_t, std::vector<int>>> live;   // (indice, pixels) des sprites visibles
+  struct Live { size_t k; std::vector<int> px; int w, h; };   // sprite visible : indice, pixels, taille actuelle
+  std::vector<Live> live;
   for (size_t k = 0; k < spriteDraws_.size();) {
     SpriteDraw &e = spriteDraws_[k];
     int sw, sh;
@@ -198,7 +232,7 @@ void Machine::overlayARGB(uint32_t *out, std::vector<SpriteDraw> *visible) const
         int x = e.x + c, y = e.y + r, v = spx[size_t(r) * sw + c];
         if (v >= 0 && x >= 0 && x < 320 && y >= 0 && y < 200 && idx[y * 320 + x] == v) sprMask[y * 320 + x] = 1;
       }
-    live.push_back({k, spx});
+    live.push_back({k, spx, sw, sh});
     k++;
   }
   for (int i = 0; i < 64000; i++) {
@@ -209,15 +243,19 @@ void Machine::overlayARGB(uint32_t *out, std::vector<SpriteDraw> *visible) const
   }
   // sprites remplacés en HD : on efface l'original du cockpit (on remet ce qu'il recouvrait)
   if (visible) visible->clear();
-  for (auto &[k, px] : live) {
-    const SpriteDraw &e = spriteDraws_[k];
-    if (e.under.empty()) continue;
-    int sw = e.w, sh = e.h;
+  for (const Live &lv : live) {
+    const SpriteDraw &e = spriteDraws_[lv.k];
+    // seulement les sprites suivis maintenant (textures HD coupées ou remises en cours de jeu : le
+    // relevé fait au dessin peut dater d'avant) ; dessous inconnu : transparent (l'image HD le couvre)
+    if (!spriteWatch_[e.id & 255]) continue;
+    // taille du dessin relevé et taille actuelle du sprite : la plus petite des deux (le jeu peut
+    // avoir changé l'image d'un même numéro depuis)
+    const int sw = std::min(lv.w, e.w), sh = std::min(lv.h, e.h);
     for (int r = 0; r < sh; r++)
       for (int c = 0; c < sw; c++) {
-        int x = e.x + c, y = e.y + r, v = px[size_t(r) * sw + c];
+        int x = e.x + c, y = e.y + r, v = lv.px[size_t(r) * lv.w + c];
         if (v < 0 || x < 0 || x >= 320 || y < 0 || y >= 200 || idx[y * 320 + x] != v) continue;
-        uint8_t u = e.under[size_t(r) * e.w + c];
+        uint8_t u = e.under.empty() ? 255 : e.under[size_t(r) * e.w + c];
         out[y * 320 + x] = u == 255 ? 0 : paletteARGB(u);
       }
     if (visible) visible->push_back(e);
@@ -236,11 +274,52 @@ Machine::Machine(const Bytes &file) {
   std::memcpy(ram + BASE, img.data(), img.size());
   // contrôle : noms des circuits à l'adresse attendue
   if (std::memcmp(ram + 0x13498, "LITTLE RAMP", 11) != 0) throw std::runtime_error("version du jeu non reconnue");
+  if (current && current != this) {   // une autre machine existe : on sauve l'état de son processeur
+    current->cpuCtx_.resize(m68k_context_size());
+    m68k_get_context(current->cpuCtx_.data());
+  }
   current = this;
   m68k_init();
   m68k_set_cpu_type(M68K_CPU_TYPE_68000);
   setupLowMem();
   m68k_pulse_reset();
+}
+
+void Machine::useTrackSet(const TrackSet *ts) {
+  // zones remplacées : pointeurs de la routine des circuits, noms, initiales, une valeur et des
+  // réglages par circuit
+  static const std::pair<uint32_t, uint32_t> zones[] = {{0x48398, 4}, {0x483b8, 4}, {0x13498, 128}, {0x4d35c, 16}, {0x4e7e4, 8}, {0x1451a, 64}};
+  if (origTracks_.empty())
+    for (auto &[a, n] : zones) origTracks_.insert(origTracks_.end(), ram + a, ram + a + n);
+  trackSet_ = ts;
+  if (!ts) {   // circuits d'origine
+    size_t k = 0;
+    for (auto &[a, n] : zones) { std::memcpy(ram + a, origTracks_.data() + k, n); k += n; }
+    return;
+  }
+  // comme le chargeur de la version TNT : nouvelle table des circuits et nouvelle base de leurs
+  // données dans la routine de décodage $48390 (movea.l #$13790,A2 / addi.l #$13670,D0)
+  auto put32 = [&](uint32_t a, uint32_t v) { ram[a] = uint8_t(v >> 24); ram[a + 1] = uint8_t(v >> 16); ram[a + 2] = uint8_t(v >> 8); ram[a + 3] = uint8_t(v); };
+  if (w(0x48396) != 0x247c || (l(0x48398) != 0x13790 && l(0x48398) != TNT_TABLE) || w(0x483b6) != 0x0680 || (l(0x483b8) != 0x13670 && l(0x483b8) != TNT_DATA))
+    throw std::runtime_error("circuits TNT : routine des circuits non reconnue");
+  std::memcpy(ram + TNT_DATA, ts->data.data(), ts->data.size());
+  for (int k = 0; k < 8; k++) { uint16_t p = uint16_t(0xb100 + ts->offsets[k]); ram[TNT_TABLE + 2 * k] = uint8_t(p); ram[TNT_TABLE + 2 * k + 1] = uint8_t(p >> 8); }
+  put32(0x48398, TNT_TABLE);
+  put32(0x483b8, TNT_DATA);
+  for (int k = 0; k < 8; k++) std::memcpy(ram + 0x13498 + 16 * k, ts->names[k].data(), 16);   // noms
+  std::memcpy(ram + 0x4d35c, ts->initials, 16);   // initiales des circuits
+  std::memcpy(ram + 0x4e7e4, ts->counts, 8);      // une valeur par circuit
+  std::memcpy(ram + 0x1451a, ts->params, 64);     // réglages par circuit
+}
+
+void Machine::activate() {
+  if (current == this) return;
+  if (current) {
+    current->cpuCtx_.resize(m68k_context_size());
+    m68k_get_context(current->cpuCtx_.data());
+  }
+  if (!cpuCtx_.empty()) m68k_set_context(cpuCtx_.data());
+  current = this;
 }
 
 Machine::~Machine() {
@@ -252,10 +331,11 @@ Machine::~Machine() {
 void Machine::setupLowMem() {
   for (int i = 0; i < 0x80; i += 2) { ram[HLE + i] = 0x4e; ram[HLE + i + 1] = 0x73; }  // RTE
   ram[PARK] = 0x60; ram[PARK + 1] = 0xfe;
+  ram[PARK_LINK] = 0x60; ram[PARK_LINK + 1] = 0xfe;
   auto w32 = [&](uint32_t a, uint32_t v) { ram[a] = v >> 24; ram[a + 1] = v >> 16; ram[a + 2] = v >> 8; ram[a + 3] = v; };
   for (int v = 2; v < 256; v++) w32(v * 4, HLE);
   w32(0, 0x7000); w32(4, A_BOOT);
-  w32(33 * 4, HLE_GEMDOS); w32(46 * 4, HLE_XBIOS); w32(10 * 4, HLE_LINEA);
+  w32(33 * 4, HLE_GEMDOS); w32(45 * 4, HLE_BIOS); w32(46 * 4, HLE_XBIOS); w32(10 * 4, HLE_LINEA);
   w32(0x42e, RAMSIZE); w32(0x44e, SCREEN);
   ram[0x484] = 7;
 }
@@ -345,6 +425,32 @@ void Machine::hleGemdos(uint32_t sr, uint32_t pc, uint32_t args) {
   hleReturn(sr, pc, 0);
 }
 
+// BIOS : seul le port série (périphérique 1, câble « Computer Link ») est utilisé par le jeu
+void Machine::hleBios(uint32_t sr, uint32_t pc, uint32_t args) {
+  auto rw = [&](uint32_t a) { return (read8(a) << 8) | read8(a + 1); };
+  uint32_t fn = rw(args), dev = rw(args + 2), d0 = 0;
+  switch (fn) {
+    case 1:   // Bconstat : -1 si un octet attend
+      if (dev == 1) d0 = serialIn_.empty() ? 0 : 0xffffffffu;
+      break;
+    case 2:   // Bconin : attend un octet (on rejoue l'appel tant que rien n'est arrivé)
+      if (dev == 1) {
+        if (serialIn_.empty()) { setSR(sr); m68k_set_reg(M68K_REG_PC, pc - 2); return; }
+        d0 = serialIn_.front(); serialIn_.pop_front(); serialRecv_++;
+      }
+      break;
+    case 3:   // Bconout
+      if (dev == 1) { serialSent_++; if (serialOut) serialOut(uint8_t(rw(args + 4))); }
+      d0 = 0xffffffffu;
+      break;
+    case 8:   // Bcostat : toujours prêt à émettre
+      d0 = 0xffffffffu;
+      break;
+    default: break;
+  }
+  hleReturn(sr, pc, d0);
+}
+
 void Machine::hleXbios(uint32_t sr, uint32_t pc, uint32_t args) {
   auto rw = [&](uint32_t a) { return (read8(a) << 8) | read8(a + 1); };
   auto rl = [&](uint32_t a) { return (uint32_t(rw(a)) << 16) | rw(a + 2); };
@@ -381,12 +487,117 @@ void Machine::hook(uint32_t pc) {
     reached_ = true; m68k_set_reg(M68K_REG_PC, PARK); m68k_end_timeslice(); return;
   }
   if (debugHook) debugHook(*this, pc);
+  // « Computer Link » : le jeu est retenu à l'entrée de la poignée de main tant que linkGate refuse
+  // (adversaire pas encore choisi, ou esclave qui attend le premier octet du maître)
+  if (pc == A_LINK && linkGate && !linkGate()) { linkHeld_ = true; m68k_set_reg(M68K_REG_PC, PARK_LINK); return; }
+  if (pc == PARK_LINK && linkHeld_) {
+    if (!linkGate || linkGate()) { linkHeld_ = false; m68k_set_reg(M68K_REG_PC, A_LINK); }
+    return;
+  }
+  // Échap dans un menu : revenir au menu précédent (choix « Cancel » ; le menu des divisions d'entraînement,
+  // qui n'en a pas, est validé puis le menu suivant est annulé)
+  if (pc == A_MENU) {
+    menuId_ = int(m68k_get_reg(nullptr, M68K_REG_D1) & 0xff);
+    selectMenu_ = false;
+    if (menuId_ == MENU_SELECT) {   // menu de départ : 4 choix au lieu de 3
+      uint32_t sp = m68k_get_reg(nullptr, M68K_REG_A7);
+      uint32_t ret = (uint32_t(ram[sp]) << 24 | ram[sp + 1] << 16 | ram[sp + 2] << 8 | ram[sp + 3]) & 0xffffff;
+      if (ret == RET_SELECT_MENU) {
+        selectMenu_ = true;
+        ram[MENU_TABLE_SELECT + 3] = TXT_ONLINE;
+        m68k_set_reg(M68K_REG_D2, (m68k_get_reg(nullptr, M68K_REG_D2) & ~0xffu) | 3u);
+      }
+    }
+    menuBack_ = autoCancel_ == menuId_;
+    autoCancel_ = -1;
+  } else if (pc == A_MENU_END) {
+    if (selectMenu_) { selectChoice_ = int(m68k_get_reg(nullptr, M68K_REG_D0) & 0xff); selectMenu_ = false; }
+    menuId_ = -1;
+  }
+  // textes du menu de départ remplacés : la boucle d'affichage lit notre tampon
+  if (pc == A_PRINT && selectMenu_ && (ram[0x4c0f1] & 0x80)) {
+    uint8_t id = uint8_t(m68k_get_reg(nullptr, M68K_REG_D1));
+    const char *t = id == TXT_MULTI ? "Multiplayer - Local" : id == TXT_LINK ? "Computer Link - Local LAN"
+                    : id == TXT_ONLINE ? "Online Multiplayer" : nullptr;
+    if (t) {
+      size_t n = std::strlen(t);
+      std::memcpy(ram + TEXT_BUF, t, n); ram[TEXT_BUF + n] = 0xff;
+      customText_ = true; customStart_ = id;
+    }
+  } else if (pc == A_PRINT_LOOP && customText_) {
+    uint32_t d1 = m68k_get_reg(nullptr, M68K_REG_D1);
+    uint8_t idx = uint8_t(uint8_t(d1) - customStart_);
+    int32_t d1w = int16_t(d1 & 0xffff);
+    m68k_set_reg(M68K_REG_A1, uint32_t(int32_t(TEXT_BUF + idx) - d1w));
+    m68k_set_reg(M68K_REG_PC, A_PRINT_READ);
+    return;
+  } else if (pc == A_PRINT_END) customText_ = false;
+  else if (pc == A_MENU_WAIT && menuBack_) {
+    menuBack_ = false;
+    uint32_t sp = m68k_get_reg(nullptr, M68K_REG_A7);
+    uint32_t ret = (uint32_t(ram[sp]) << 24 | ram[sp + 1] << 16 | ram[sp + 2] << 8 | ram[sp + 3]) & 0xffffff;
+    if (menuId_ == MENU_DRIVERS && ret == RET_DRIVERS_MENU) {   // multijoueur : retour au menu de départ
+      ram[0x10958] = 0;                                         // (fin normale du menu : $515EC)
+      m68k_set_reg(M68K_REG_A7, sp + 4);
+      m68k_set_reg(M68K_REG_PC, A_SELECT);
+      menuId_ = -1;
+      return;
+    }
+    int c = menuCancelIndex();
+    if (c >= 0) ram[M_SEL] = uint8_t(c);
+    else autoCancel_ = MENU_PRACTISE;   // menu des divisions : on garde la division en surbrillance
+    ram[M_FIRE] = 0x10;
+    m68k_set_reg(M68K_REG_PC, A_MENU_SHOW);
+    return;
+  }
+  if (pc == A_NAME_INPUT) { inName_ = true; nameAuto_ = true; }
+  else if (pc == A_NAME_DONE) inName_ = false;
+  else if (pc == A_NAME_KEY && nameAuto_) {
+    // multijoueur : chaque joueur a son pseudo ; le jeu maître remplit lui-même le nom des pilotes
+    // (1er : le sien, 2e : celui de l'autre joueur) au lieu de les faire taper
+    nameAuto_ = false;
+    uint32_t sp = m68k_get_reg(nullptr, M68K_REG_A7);
+    uint32_t ret = (uint32_t(ram[sp + 8]) << 24 | ram[sp + 9] << 16 | ram[sp + 10] << 8 | ram[sp + 11]) & 0xffffff;
+    std::string nm = (ret == RET_NAME_LINK && linkName) ? linkName(ram[DRIVER_COUNT]) : "";
+    std::string ok;
+    for (char ch : nm)   // caractères acceptés par la saisie du jeu
+      if (ok.size() < 12 && ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == ' ' || ch == '.' || ch == '-'))
+        ok += ch;
+    while (!ok.empty() && ok.back() == ' ') ok.pop_back();
+    if (!ok.empty()) {
+      uint8_t base = ram[NAME_OFS];
+      for (size_t k = 0; k < ok.size(); k++) ram[NAME_BUF + uint8_t(base + k)] = uint8_t(ok[k]);
+      m68k_set_reg(M68K_REG_D1, uint32_t(ok.size()));
+      m68k_set_reg(M68K_REG_PC, A_NAME_PAD);
+      inName_ = false;
+      return;
+    }
+  }
+  if (pc == A_NAME_KEY && nameBack_) {
+    // Échap pendant « NAME? » : retour au menu de départ (ou à « Enter another driver » en multijoueur) ;
+    // on quitte par la fin normale de la saisie en remplaçant l'adresse de retour de $48B90
+    nameBack_ = false;
+    uint32_t sp = m68k_get_reg(nullptr, M68K_REG_A7);   // [retour vers $48BEC][$56C74 sauvé][retour de $48B90]
+    uint32_t ret = (uint32_t(ram[sp + 8]) << 24 | ram[sp + 9] << 16 | ram[sp + 10] << 8 | ram[sp + 11]) & 0xffffff;
+    if (ret == RET_NAME_SINGLE || ret == RET_NAME_MULTI) {
+      uint32_t to = A_SELECT;
+      if (ret == RET_NAME_MULTI && ram[DRIVER_COUNT] > 0) { ram[DRIVER_COUNT]--; to = A_DRIVERS; }
+      for (int k = 0; k < 4; k++) ram[sp + 8 + k] = uint8_t(to >> (24 - 8 * k));
+      m68k_set_reg(M68K_REG_A7, sp + 4);
+      m68k_set_reg(M68K_REG_PC, A_NAME_DONE);
+      inName_ = false;
+      return;
+    }
+  }
   if (layers_) {   // voiture adverse : de l'entrée de $546DA jusqu'au retour à l'appelant
     if (pc == A_DRAW_OPPONENT && !inOpponent_) {
       uint32_t sp = m68k_get_reg(nullptr, M68K_REG_A7);
       oppReturn_ = (uint32_t(ram[sp]) << 24 | ram[sp + 1] << 16 | ram[sp + 2] << 8 | ram[sp + 3]) & 0xffffff;
       inOpponent_ = true;
     } else if (inOpponent_ && pc == oppReturn_) inOpponent_ = false;
+    // fissure des dégâts dans le haut du cadre : fait partie du cockpit (opaque), pas du décor
+    if (pc == 0x52f00) inCrack_ = true;
+    else if (pc == 0x52fa4 || pc == 0x52e5c) inCrack_ = false;
   }
   if ((pc == A_SPRITE || pc == A_SPRITE_XY) && (layers_ || spriteWatch_.any())) recordSprite(pc);
   if (pc == A_DRAW_OPPONENT) oppDrawnInRace_ = true;
@@ -394,16 +605,34 @@ void Machine::hook(uint32_t pc) {
   if (pc == A_PHYSICS) ticks_++;
   if (pc == A_RENDER) { std::memcpy(renderSnap_, ram + 0x10ac2, 18); inOpponent_ = false; }
   if (skipWaits_ && pc == A_WAITVBL) ram[A_VBLCOUNTER] = 0;
-  if (pc < HLE || pc >= HLE + 0x40) return;
+  if (pc < HLE || pc >= HLE + 0x60) return;
   uint32_t sp = m68k_get_reg(nullptr, M68K_REG_A7);
-  if (pc != HLE_GEMDOS && pc != HLE_XBIOS && pc != HLE_LINEA) return;   // simple RTE
+  if (pc != HLE_GEMDOS && pc != HLE_XBIOS && pc != HLE_LINEA && pc != HLE_BIOS) return;   // simple RTE
   uint32_t sr = (ram[sp] << 8) | ram[sp + 1];
   uint32_t rpc = (uint32_t(ram[sp + 2]) << 24) | (ram[sp + 3] << 16) | (ram[sp + 4] << 8) | ram[sp + 5];
   m68k_set_reg(M68K_REG_A7, sp + 6);
   uint32_t args = (sr & 0x2000) ? sp + 6 : m68k_get_reg(nullptr, M68K_REG_USP);
   if (pc == HLE_GEMDOS) hleGemdos(sr, rpc, args);
   else if (pc == HLE_XBIOS) hleXbios(sr, rpc, args);
+  else if (pc == HLE_BIOS) hleBios(sr, rpc, args);
   else { setSR(sr); m68k_set_reg(M68K_REG_PC, rpc + 2); }   // Line-A : ignoré
+}
+
+int Machine::menuCancelIndex() const {
+  if (menuId_ < 0 || menuId_ > 0xfc) return -1;
+  for (int k = 3; k >= 0; k--)
+    if (ram[MENU_TEXTS + menuId_ + k] == TXT_CANCEL) return k;
+  return -1;
+}
+
+bool Machine::menuBack() {
+  // pas pendant le « Computer Link » ($4537A : maître / esclave) : les deux machines suivent les mêmes menus
+  if (ram[0x4537a] != 0) return false;
+  if (inName_) { nameBack_ = true; return true; }
+  if (menuId_ < 0) return false;
+  if (menuCancelIndex() < 0 && menuId_ != MENU_TRACKS && menuId_ != MENU_DRIVERS) return false;
+  menuBack_ = true;
+  return true;
 }
 
 int Machine::intAck(int level) {
@@ -425,16 +654,30 @@ void Machine::vblTick() {
   m68k_set_irq(4);
 }
 
-void Machine::runFrame() {
-  // écritures restées d'avant (démarrage) : appliquées en début de trame
-  for (auto &w : ymWrites_) ym2149_.write(w.reg, w.val);
-  ymWrites_.clear();
-  uint64_t done = 0;
-  frameCycleBase_ = 0;
-  while (done < CYCLES_PER_FRAME) { done += m68k_execute(int(CYCLES_PER_FRAME - done)); frameCycleBase_ = done; }
+bool Machine::runPart(int parts) {
+  parts = std::clamp(parts, 1, 64);
+  activate();
+  if (part_ == 0) {
+    // écritures restées d'avant (démarrage) : appliquées en début de trame
+    for (auto &w : ymWrites_) ym2149_.write(w.reg, w.val);
+    ymWrites_.clear();
+    partDone_ = 0;
+    frameCycleBase_ = 0;
+  }
+  part_ = std::min(part_ + 1, parts);
+  uint64_t target = CYCLES_PER_FRAME * uint64_t(part_) / uint64_t(parts);
+  while (partDone_ < target) { partDone_ += m68k_execute(int(target - partDone_)); frameCycleBase_ = partDone_; }
+  if (sliceHook) sliceHook();   // réseau du câble « Computer Link » : lu et écrit à chaque tranche
+  if (part_ < parts) return false;
+  part_ = 0;
   frameCycleBase_ = 0;
   renderAudio();
   vblTick();
+  return true;
+}
+
+void Machine::runFrame() {
+  while (!runPart(4)) {}
 }
 
 // son de la trame : les écritures dans la YM2149 sont appliquées à l'échantillon correspondant à leur cycle
@@ -457,6 +700,7 @@ void Machine::renderAudio() {
 }
 
 void Machine::runUntil(uint32_t stopAt, uint64_t maxCycles) {
+  activate();
   stopAt_ = stopAt; reached_ = false;
   uint64_t total = 0;
   while (!reached_) {
@@ -483,6 +727,7 @@ void Machine::passChecksum() {
 }
 
 void Machine::coldStart() {
+  activate();
   m68k_set_reg(M68K_REG_PC, A_BOOT);
   m68k_set_reg(M68K_REG_A7, 0x7000);
   m68k_set_reg(M68K_REG_USP, 0x103da);
@@ -501,6 +746,7 @@ void Machine::boot() {
 }
 
 void Machine::startPractice(int track) {
+  activate();
   boot();
   skipWaits_ = true;
   ram[A_TRACKSEL] = uint8_t(track & 7);
@@ -562,7 +808,7 @@ void Machine::applyTuning() {
     origG_ = w(0x4e88c); origDamp_ = w(0x4ee64); origDt_ = ram[DT_SITES[0] + 3];
     haveOrig_ = true;
   }
-  auto clampi = [](double v, int lo, int hi) { return int(std::lround(v < lo ? lo : v > hi ? hi : v)); };
+  auto clampi = [](double v, int lo, int hi) { return int(std::lround(v >= lo ? (v <= hi ? v : hi) : lo)); };   // NaN -> lo
   int g = clampi(origG_ * tuning_.gravity, 1, 0x7fff);
   w16(0x4e884, uint32_t(-g) & 0xffff); w16(0x4e88c, uint32_t(g));
   int dt = clampi(origDt_ * tuning_.timeStep, 1, 255);
@@ -577,7 +823,7 @@ void Machine::applyTuning() {
     int thrust = clampi((b8[2] | (b8[3] << 8)) * tuning_.thrust, 0, 0x7fff);
     b8[2] = uint8_t(thrust); b8[3] = uint8_t(thrust >> 8);
     b8[6] = uint8_t(clampi(b8[6] / (tuning_.boostUse < 0.05 ? 0.05 : tuning_.boostUse), 1, 255));
-    b8[9] = uint8_t(clampi(b8[9] + tuning_.shockTolerance, 0, 255));
+    b8[9] = uint8_t(clampi(double(b8[9]) + tuning_.shockTolerance, 0, 255));
     std::memcpy(ram + CAR_TABLE + blk * 11, b8, 11);
     if ((ram[0x110ca] ? 1 : 0) == blk)
       for (int i : {2, 3, 6, 9}) ram[CAR_BLOCK + i] = b8[i];

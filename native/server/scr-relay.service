@@ -1,0 +1,19 @@
+[Unit]
+# Serveur relais Stunt Car Racer : voir README_SERVER.txt, section 2
+# Stunt Car Racer relay server: see README_SERVER.txt, section 2
+Description=Stunt Car Racer relay server (online multiplayer) / serveur relais Stunt Car Racer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/scr_relay --port 27420 --journal
+User=scrrelay
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

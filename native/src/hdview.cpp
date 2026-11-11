@@ -2,8 +2,11 @@
 #include "hdview.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <thread>
+#include <cstdio>
+#include <cstdlib>
 
 namespace scr {
 namespace {
@@ -12,6 +15,7 @@ constexpr uint32_t A_POS = 0x10ac2, A_PITCH = 0x10ace, A_YAW = 0x10ad0, A_ROLL =
 constexpr double PI = 3.14159265358979323846;
 constexpr double ANG = 2 * PI / 65536;
 constexpr double GROUND_RAW = 512;    // niveau du sol (hauteur brute)
+constexpr double START_LINE_W = 40;   // épaisseur de la ligne de départ (unités du monde)
 
 double wrapPi(double a) {
   while (a > PI) a -= 2 * PI;
@@ -45,7 +49,7 @@ const Hills HILLS;
 
 }  // namespace
 
-HdView::HdView(const Machine &m) : tracks_(decodeTracks(m.image())) {}
+HdView::HdView(const Machine &m) : tracks_(decodeTracks(m.image(), m.trackSet())) { Renderer3D::warmTextures(); }
 
 // flamme du boost en haute définition, tirée pixel pour pixel du sprite d'origine : même silhouette
 // (les 4 flammes de chaque côté), même place, mêmes couleurs (bord jaune, cœur blanc) ; les contours
@@ -152,6 +156,11 @@ void HdView::drawFlame(int id, double x0, double y0, double s, const Machine &m,
 
 void HdView::afterFrame(const Machine &m) {
   frame_++;
+  {   // dégâts de la voiture du joueur : une hausse = choc ou réception brutale (étincelles, fumée)
+    int d = m.b(0x10939) + m.b(0x1093a) + m.b(0x1093b);
+    if (ownDamage_ >= 0 && d > ownDamage_) ownImpact_ = std::min(63, ownImpact_ + (d - ownDamage_) * 4);
+    ownDamage_ = d;
+  }
   {   // vent relatif : vitesse au sol de la voiture ($10AD4 / $10AD8)
     double vx = int16_t(m.w(0x10ad4)), vz = int16_t(m.w(0x10ad8));
     windTarget_ = std::clamp(std::sqrt(vx * vx + vz * vz) / 20000.0, 0.0, 1.0);
@@ -185,6 +194,7 @@ void HdView::afterFrame(const Machine &m) {
     s.p.roll = int16_t(m.w(A_ROLL)) * ANG;
     s.track = m.b(A_TRACK) & 7;
     s.opp = opponentFromGame(m, s.track);
+    s.oppImpact = oppImpact_;
     snaps_.push_back(s);
     while (snaps_.size() > 32) snaps_.pop_front();
   }
@@ -211,7 +221,13 @@ double HdView::playTime(double t) {
 static const int FLAME_IDS[] = {6, 7, 49, 8, 9, 50};   // flammes du boost (gauche / droite)
 
 int HdView::loadAssets(Machine &m, const std::string &dir) {
-  int n = dir.empty() ? 0 : assets.load(dir);
+  // dossier vide : images HD désactivées (sprites et cockpit du jeu, agrandis)
+  for (int id = 0; id < 256; id++) m.watchSprite(id, false);
+  int n = assets.load(dir);
+  // images du cockpit à l'échelle de l'écran : recalculées (textures coupées : plus rien de HD)
+  ckScaled_.clear(); ckFront_.clear(); ckBack_.clear(); ckData_ = ckFrontData_ = ckBackData_ = nullptr; ckW_ = 0;
+  ckRef_.clear(); ckRefFrames_ = 0; tubeTop_.clear(); crackHash_ = 0;
+  crowdWav = !dir.empty() && crowd_.loadWav(dir + "/foule.wav");
   for (auto &[id, spr] : assets.sprites()) m.watchSprite(id);
   if (params.builtinFlames)
     for (int id : FLAME_IDS) m.watchSprite(id);
@@ -221,6 +237,33 @@ int HdView::loadAssets(Machine &m, const std::string &dir) {
 // image HD d'un sprite : celle du dossier hd/ (les flammes sans image sont dessinées par drawFlame)
 const HdSprite *HdView::spriteFor(int id, const Machine &) { return assets.sprite(id); }
 
+void HdView::setTracks(const Machine &m) {
+  tracks_ = decodeTracks(m.image(), m.trackSet());
+  scenery_.clear(); crowdTrack_ = -1; hint_ = -1;
+}
+
+void HdView::mixCrowd(int16_t *pcm, size_t n, int rate, double volume) {
+  if (!params.scenery || !racing() || snaps_.size() < 2) return;
+  const int track = snaps_.back().track & 7;
+  if (track != crowdTrack_) {   // tribunes du circuit (même décor que celui qui est dessiné)
+    auto it = scenery_.find(track);
+    if (it == scenery_.end()) it = scenery_.emplace(track, buildScenery(tracks_[track], params.density)).first;
+    crowdSrc_.clear();
+    for (const SceneObj &o : it->second)
+      if (o.kind == SCENE_STAND) crowdSrc_.push_back({o.x - o.fx * 350, o.z - o.fz * 350, o.len / 2, o.fx, o.fz});   // public : milieu des gradins
+    crowdTrack_ = track; crowd_.reset();
+  }
+  // auditeur : la voiture ; vitesse sur la dernière demi-seconde (50 trames / s)
+  const Snap &b = snaps_.back();
+  const Snap *a = &snaps_.front();
+  for (const Snap &s : snaps_) if (b.t - s.t >= 12) a = &s;
+  double vx = 0, vz = 0;
+  if (b.t > a->t && std::fabs(b.p.x - a->p.x) + std::fabs(b.p.z - a->p.z) < 3000 && a->track == b.track) {
+    vx = (b.p.x - a->p.x) / (b.t - a->t) * 50; vz = (b.p.z - a->p.z) / (b.t - a->t) * 50;
+  }
+  crowd_.mix(pcm, n, rate, volume, crowdSrc_, b.p.x, b.p.z, vx, vz);
+}
+
 bool HdView::racing() const { return !snaps_.empty() && frame_ - lastTickFrame_ < 40; }
 
 Pose HdView::poseAt(double t) const {
@@ -228,8 +271,10 @@ Pose HdView::poseAt(double t) const {
   if (t <= snaps_.front().t) return snaps_.front().p;
   for (size_t i = 0; i + 1 < snaps_.size(); i++) {
     const Snap &a = snaps_[i], &b = snaps_[i + 1];
-    if (t < b.t) {
-      double k = (t - a.t) / (b.t - a.t);
+    // au-delà du dernier état connu (retard court) : trajectoire prolongée d'au plus 0,6 intervalle
+    const bool last = i + 2 == snaps_.size();
+    if (t < b.t || last) {
+      double k = std::min((t - a.t) / (b.t - a.t), 1.6);
       double d = std::fabs(b.p.x - a.p.x) + std::fabs(b.p.y - a.p.y) + std::fabs(b.p.z - a.p.z);
       if (d > 3000 || a.track != b.track) return k < 0.5 ? a.p : b.p;   // grue / changement de circuit
       Pose p;
@@ -300,15 +345,109 @@ OppPose HdView::opponentFromGame(const Machine &m, int track) {
   o.fwd = {fx / fl, fy / fl, fz / fl};
   double ry = (hr - hl) * hs, rl = std::sqrt((rx - lx) * (rx - lx) + ry * ry + (rz - lz) * (rz - lz));
   o.right = {(rx - lx) / rl, ry / rl, (rz - lz) / rl};
-  // hauteur : au sol, ou en vol si la route descend plus vite que la chute libre
-  const double G = 16;   // gravité, en hauteur brute par tick² (mesurée sur la voiture du joueur)
-  if (!oppHave_ || std::fabs(surf - oppY_) > 3000) { oppY_ = surf; oppVy_ = 0; oppHave_ = true; }
-  else {
-    double pred = oppY_ + oppVy_ - G / 2;
-    if (surf >= pred - 2) { oppVy_ = std::clamp(surf - oppY_, -400.0, 400.0); oppY_ = surf; }
-    else { oppY_ = pred; oppVy_ -= G; }
+  // hauteur : celle que le jeu calcule pour l'adversaire, au sol comme en vol ($10B50 gauche,
+  // $10B52 droite, $10B54 milieu ; même échelle que la route) — trajectoire en cloche pendant les sauts
+  double y = int16_t(m.w(0x10b54));
+  if (std::fabs(y - surf) > 20000) y = surf;   // valeur absente : sur la route
+  {   // valeur figée alors que l'adversaire roule (non calculée par le jeu) : sur la route
+    const bool moved = std::hypot(o.x - oppPx_, o.z - oppPz_) > 1;
+    oppStale_ = oppHave_ && moved && y == oppRaw_ ? oppStale_ + 1 : 0;
+    oppRaw_ = y;
+    if (oppStale_ > 8 && std::fabs(y - surf) > 100) y = surf;
   }
+  oppImpact_ = 0;
+  const double air = y - surf;
+  if (!oppHave_ || std::fabs(y - oppY_) > 3000) { oppVy_ = 0; oppAir_ = air; oppHave_ = true; oppPx_ = o.x; oppPz_ = o.z; }
+  else {
+    const double vy = y - oppY_;
+    // atterrissage : en l'air au dernier état, sur la route maintenant, en descendant vite
+    if (oppAir_ > 40 && air < 40 && oppVy_ < -30) oppImpact_ = std::clamp(int(-oppVy_ / 5), 4, 50);
+    // en vol : la voiture suit sa trajectoire (nez vers le haut à la montée, vers le bas à la descente)
+    const double step = std::hypot(o.x - oppPx_, o.z - oppPz_);
+    if (air > 40 && step > 1) {
+      const double hx = o.fwd.x, hz = o.fwd.z, hl = std::hypot(hx, hz);
+      if (hl > 1e-6) {
+        const double slope = std::clamp(vy * hs / step, -1.5, 1.5);
+        const double l = std::sqrt(1 + slope * slope);
+        o.fwd = {hx / hl / l, slope / l, hz / hl / l};
+      }
+    }
+    oppVy_ = vy; oppAir_ = air; oppPx_ = o.x; oppPz_ = o.z;
+  }
+  oppY_ = y;
   o.yRaw = oppY_;
+  o.valid = true;
+  return o;
+}
+
+// flammes du boost : comme vu du cockpit, le moteur V8 sur le capot crache 8 petites flammes
+// (4 échappements de chaque côté) qui montent et partent vers l'arrière ; repère et échelle de addCar
+void HdView::addFlames(const OppPose &o, double hs, int seed) {
+  const Vec3 r = o.right, f = o.fwd;
+  Vec3 u{f.y * r.z - f.z * r.y, f.z * r.x - f.x * r.z, f.x * r.y - f.y * r.x};
+  if (u.y < 0) u = {-u.x, -u.y, -u.z};
+  const double base = o.yRaw * hs, K = 0.55;
+  auto W = [&](double x, double y, double z) {
+    x *= K; y *= K; z *= K;
+    y -= o.squat * K;
+    return Vec3{o.x + r.x * x + u.x * y + f.x * z, base + r.y * x + u.y * y + f.y * z, o.z + r.z * x + u.z * y + f.z * z};
+  };
+  uint32_t h = (flameTick_++ + uint32_t(seed) * 7919u) * 2654435761u;
+  for (int side = -1; side <= 1; side += 2)
+    for (int k = 0; k < 4; k++) {
+      h = h * 1103515245u + 12345u;
+      // échappements le long du moteur, sortant du toit de la cabine (pente : y 45 à l'avant z 150,
+      // 99 à l'arrière z -95, demi-largeur 37) ; pied légèrement enfoncé, caché par la carrosserie
+      const double z0 = 128 - k * 22, x0 = side * 24, y0 = 45 + 54 * (150 - z0) / 245 - 3;
+      double up = 34 + double((h >> 16) % 26), back = 14 + double((h >> 10) % 12), w = 6 + double((h >> 8) % 3);
+      // jet en dégradé : jaune à la sortie de l'échappement, orange au milieu, rouge à la pointe
+      // (tranches successives d'une pyramide qui s'affine vers le haut, l'arrière et l'extérieur)
+      auto grad = [](double s, double flick) {
+        static const double C[3][3] = {{255, 230, 70}, {255, 140, 25}, {225, 35, 15}};   // jaune, orange, rouge
+        double t = std::min(std::max(s, 0.0), 1.0) * 2;
+        int i = t >= 1 ? 1 : 0; double k = t - i;
+        uint32_t col = 0xff000000u;
+        for (int c = 0; c < 3; c++) {
+          double v = (C[i][c] + (C[i + 1][c] - C[i][c]) * k) * flick;
+          col |= uint32_t(std::min(255.0, std::max(0.0, v))) << (16 - 8 * c);
+        }
+        return col;
+      };
+      const double flick = 0.88 + 0.12 * double((h >> 3) % 8) / 7;   // vacillement de la luminosité
+      const double tx = side * up * 0.8, ty = up, tz = -back;           // pointe : inclinée vers l'extérieur (en V)
+      const int bands = 8;
+      auto ring = [&](double s, Vec3 out[4]) {
+        double wd = w * (1 - s), cx = x0 + tx * s, cy = y0 + ty * s, cz = z0 + tz * s;
+        out[0] = W(cx - wd, cy, cz - wd); out[1] = W(cx + wd, cy, cz - wd);
+        out[2] = W(cx + wd, cy, cz + wd); out[3] = W(cx - wd, cy, cz + wd);
+      };
+      Vec3 lo[4], hi[4];
+      ring(0, lo);
+      for (int bnd = 0; bnd < bands; bnd++) {
+        double s0 = double(bnd) / bands, s1 = double(bnd + 1) / bands;
+        uint32_t col = grad((s0 + s1) / 2, flick);
+        if (bnd == bands - 1) {   // dernière tranche : pointe
+          Vec3 tip = W(x0 + tx, y0 + ty, z0 + tz);
+          for (int e = 0; e < 4; e++) { Vec3 t[3] = {lo[e], lo[(e + 1) % 4], tip}; r3d_.poly(t, 3, col); }
+        } else {
+          ring(s1, hi);
+          for (int e = 0; e < 4; e++) { Vec3 q[4] = {lo[e], lo[(e + 1) % 4], hi[(e + 1) % 4], hi[e]}; r3d_.poly(q, 4, col); }
+          std::copy(hi, hi + 4, lo);
+        }
+      }
+    }
+}
+
+OppPose HdView::ghostFromPose(const Pose &p) const {
+  // même convention que la caméra : avant horizontal (sin lacet, cos lacet), droite (cos lacet, -sin lacet)
+  OppPose o;
+  double sy = std::sin(p.yaw), cy = std::cos(p.yaw);
+  double pitch = params.pitchSign * p.pitch, roll = params.rollSign * p.roll;
+  double cp = std::cos(pitch), sp = std::sin(pitch), cr = std::cos(roll), sr = std::sin(roll);
+  o.fwd = {sy * cp, sp, cy * cp};
+  o.right = {cy * cr, -sr, -sy * cr};
+  o.x = p.x; o.z = p.z;
+  o.yRaw = p.y * 2;   // la caméra utilise p.y × hScale / 0,5 : hauteur brute = 2 × p.y
   o.valid = true;
   return o;
 }
@@ -318,9 +457,12 @@ OppPose HdView::opponentAt(double t) const {
   if (t <= snaps_.front().t) return snaps_.front().opp;
   for (size_t i = 0; i + 1 < snaps_.size(); i++) {
     const OppPose &a = snaps_[i].opp, &b = snaps_[i + 1].opp;
-    if (t >= snaps_[i + 1].t) continue;
+    // au-delà du dernier état : trajectoire prolongée comme celle de la voiture du joueur (poseAt),
+    // sinon l'adversaire s'arrête un instant pendant que la caméra avance (tremblement avant-arrière)
+    const bool last = i + 2 == snaps_.size();
+    if (t >= snaps_[i + 1].t && !last) continue;
     if (!a.valid || !b.valid) return b.valid ? b : a;
-    double k = (t - snaps_[i].t) / (snaps_[i + 1].t - snaps_[i].t);
+    double k = std::min((t - snaps_[i].t) / (snaps_[i + 1].t - snaps_[i].t), 1.6);
     if (std::fabs(b.x - a.x) + std::fabs(b.z - a.z) > 3000) return k < 0.5 ? a : b;
     auto lv = [&](const Vec3 &p, const Vec3 &q) {
       Vec3 v{p.x + (q.x - p.x) * k, p.y + (q.y - p.y) * k, p.z + (q.z - p.z) * k};
@@ -337,7 +479,7 @@ OppPose HdView::opponentAt(double t) const {
 }
 
 // voiture adverse en polygones : châssis, nez, arceau, moteur et 4 roues (couleurs de la palette du jeu)
-void HdView::addCar(const OppPose &o, double hs, const Machine &m) {
+void HdView::addCar(const OppPose &o, double hs, const Machine &m, bool closed) {
   const Vec3 r = o.right, f = o.fwd;
   Vec3 u{f.y * r.z - f.z * r.y, f.z * r.x - f.x * r.z, f.x * r.y - f.y * r.x};   // haut = avant × droite
   if (u.y < 0) u = {-u.x, -u.y, -u.z};
@@ -347,48 +489,281 @@ void HdView::addCar(const OppPose &o, double hs, const Machine &m) {
     x *= K; y *= K; z *= K;
     return Vec3{o.x + r.x * x + u.x * y + f.x * z, base + r.y * x + u.y * y + f.y * z, o.z + r.z * x + u.z * y + f.z * z};
   };
-  auto pal = [&](int i) { return m.paletteARGB(i); };
+  // caisse (châssis, cabine) : abaissée de la compression des suspensions, roues posées
+  auto WB = [&](double x, double y, double z) { return W(x, y - o.squat, z); };
+  auto pal = [&](int i) { return palOf(m, i); };
   const uint32_t red = pal(10), redLight = pal(11), pink = pal(12), black = pal(0), grey = pal(14), dark = pal(9);
   // boîte : 6 faces, couleurs dessus / côtés / avant-arrière
   auto box = [&](double x0, double x1, double y0, double y1, double z0, double z1, uint32_t top, uint32_t side, uint32_t end) {
-    Vec3 c[8] = {W(x0, y0, z0), W(x1, y0, z0), W(x1, y0, z1), W(x0, y0, z1), W(x0, y1, z0), W(x1, y1, z0), W(x1, y1, z1), W(x0, y1, z1)};
+    Vec3 c[8] = {WB(x0, y0, z0), WB(x1, y0, z0), WB(x1, y0, z1), WB(x0, y0, z1), WB(x0, y1, z0), WB(x1, y1, z0), WB(x1, y1, z1), WB(x0, y1, z1)};
     Vec3 q[6][4] = {{c[4], c[5], c[6], c[7]}, {c[0], c[3], c[7], c[4]}, {c[1], c[5], c[6], c[2]},
                     {c[0], c[4], c[5], c[1]}, {c[3], c[2], c[6], c[7]}, {c[0], c[1], c[2], c[3]}};
     uint32_t col[6] = {top, side, side, end, end, black};
     for (int k = 0; k < 6; k++) r3d_.poly(q[k], 4, col[k]);
   };
-  // roue : prisme octogonal d'axe latéral
+  const bool hd = params.highDetail;
+  // roue : prisme d'axe latéral (octogonal comme l'original, rond et texturé en détails élevés)
   auto wheel = [&](double xc, double zc, double rad, double wid) {
-    Vec3 a[8], b[8];
-    for (int k = 0; k < 8; k++) {
-      double ang = (k + 0.5) * 3.14159265 / 4, yy = rad + std::sin(ang) * rad, zz = zc + std::cos(ang) * rad;
+    const int N = hd ? 28 : 8;
+    Vec3 a[32], b[32];
+    for (int k = 0; k < N; k++) {
+      double ang = (k + 0.5) * 2 * 3.14159265 / N, yy = rad + std::sin(ang) * rad, zz = zc + std::cos(ang) * rad;
       a[k] = W(xc - wid / 2, yy, zz); b[k] = W(xc + wid / 2, yy, zz);
     }
-    for (int k = 0; k < 8; k++) {
-      Vec3 q[4] = {a[k], a[(k + 1) % 8], b[(k + 1) % 8], b[k]};
-      r3d_.poly(q, 4, black);
+    // rotation : angle = distance parcourue / rayon ; le haut de la roue avance
+    // oppRoll_ : angle affiché d'une roue arrière (rayon 25) ; les roues avant, plus petites, tournent plus vite
+    const double phi = oppRoll_ * 25 / rad, cp = std::cos(phi), sp = std::sin(phi);
+    TexInfo tire; tire.kind = TEX_TIRE; tire.o = W(xc, rad, zc); tire.r = rad * K;
+    tire.u = {f.x * cp - u.x * sp, f.y * cp - u.y * sp, f.z * cp - u.z * sp};
+    tire.v = {f.x * sp + u.x * cp, f.y * sp + u.y * cp, f.z * sp + u.z * cp};
+    // flou de mouvement : angle parcouru pendant l'image (le motif est moyenné sur cet angle)
+    tire.blur = 0.5 * oppRollStep_ * 25 / rad; tire.contrast = oppRollContrast_;   // obturateur à 180°
+    for (int k = 0; k < N; k++) {
+      Vec3 q[4] = {a[k], a[(k + 1) % N], b[(k + 1) % N], b[k]};
+      if (hd) r3d_.polyTex(q, 4, black, tire); else r3d_.poly(q, 4, black);
     }
-    r3d_.poly(a, 8, grey);
-    r3d_.poly(b, 8, grey);
+    if (hd) {   // flancs : pneu, jante et moyeu
+      TexInfo rim = tire; rim.kind = TEX_RIM;
+      rim.o = W(xc - wid / 2, rad, zc); r3d_.polyTex(a, N, black, rim);
+      rim.o = W(xc + wid / 2, rad, zc); r3d_.polyTex(b, N, black, rim);
+    } else {
+      r3d_.poly(a, N, black);   // roues noires, comme l'original
+      r3d_.poly(b, N, black);
+    }
   };
-  const double wx = 78, rearZ = -90, frontZ = 95;
-  wheel(-wx, rearZ, 30, 34); wheel(wx, rearZ, 30, 34);
-  wheel(-wx + 4, frontZ, 24, 26); wheel(wx - 4, frontZ, 24, 26);
-  box(-52, 52, 14, 34, -130, 120, redLight, red, dark);      // châssis
-  box(-34, 34, 14, 30, 120, 150, redLight, red, dark);        // nez
-  box(-46, 46, 34, 58, -120, -10, red, dark, red);            // moteur / habitacle
-  box(-40, 40, 58, 64, -70, -20, pink, red, pink);            // arceau
-  box(-60, 60, 50, 56, -138, -118, redLight, dark, dark);     // aileron
+  // face peinte (détails élevés) : repère local o + s·ax + w·ay, étendue [s0,s1]×[w0,w1] en unités voiture
+  auto paint = [&](const Vec3 *q, int n, uint32_t col, Vec3 ax, Vec3 ay, double s0, double s1, double w0, double w1) {
+    if (!hd) { r3d_.poly(q, n, col); return; }
+    TexInfo t; t.kind = TEX_PAINT; t.o = WB(0, 0, 0); t.u = ax; t.v = ay;
+    t.s0 = s0 * K; t.s1 = s1 * K; t.w0 = w0 * K; t.w1 = w1 * K;
+    r3d_.polyTex(q, n, col, t);
+  };
+  // proportions mesurées sur la voiture d'origine vue de derrière : roues carrées aussi larges que
+  // hautes, cabine aussi large que deux roues et deux fois plus haute qu'elles, dont le toit (rose)
+  // descend vers l'avant
+  wheel(-69, -85, 25, 50); wheel(69, -85, 25, 50);
+  wheel(-66, 105, 23, 44); wheel(66, 105, 23, 44);
+  box(-44, 44, 12, 28, -110, 140, black, black, black);        // châssis sous la cabine
+  {   // cabine en coin : arrière haut en trapèze (plus étroit en haut et incliné vers l'avant), avant bas
+    const double x0 = -44, x1 = 44, xt = 37, yb = 28, zr = -120, zrt = -95, zf = 150, yr = 99, yf = 45;
+    Vec3 rb0 = WB(x0, yb, zr), rb1 = WB(x1, yb, zr), rt0 = WB(-xt, yr, zrt), rt1 = WB(xt, yr, zrt);
+    Vec3 fb0 = WB(x0, yb, zf), fb1 = WB(x1, yb, zf), ft0 = WB(-xt, yf, zf), ft1 = WB(xt, yf, zf);
+    Vec3 rear[4] = {rb0, rb1, rt1, rt0}, front[4] = {fb0, ft0, ft1, fb1}, top[4] = {rt0, rt1, ft1, ft0};
+    Vec3 left[4] = {rb0, rt0, ft0, fb0}, right[4] = {rb1, fb1, ft1, rt1}, bottom[4] = {rb0, fb0, fb1, rb1};
+    paint(rear, 4, red, r, u, x0, x1, yb, yr); r3d_.poly(front, 4, red);
+    if (!hd) paint(top, 4, pink, r, f, x0, x1, zrt, zf);
+    else {   // détails élevés : toit rose à l'arrière, pare-brise, compartiment moteur à l'avant (sous les flammes)
+      auto slope = [&](double x, double z) { return WB(x, yr + (yf - yr) * (z - zrt) / (zf - zrt), z); };
+      const double zg0 = -50, zg1 = 46;   // pare-brise ; moteur de zg1 à l'avant (échappements z 62 à 128)
+      Vec3 roof[4] = {rt0, rt1, slope(xt, zg0), slope(-xt, zg0)};
+      Vec3 glass[4] = {slope(-xt, zg0), slope(xt, zg0), slope(xt, zg1), slope(-xt, zg1)};
+      Vec3 eng[4] = {slope(-xt, zg1), slope(xt, zg1), ft1, ft0};
+      paint(roof, 4, pink, r, f, x0, x1, zrt, zg0);
+      TexInfo tg; tg.kind = TEX_GLASS; tg.o = WB(0, 0, 0); tg.u = r; tg.v = f; tg.r = K;
+      tg.s0 = -xt * K; tg.s1 = xt * K; tg.w0 = zg0 * K; tg.w1 = zg1 * K;
+      r3d_.polyTex(glass, 4, pink, tg);
+      TexInfo te = tg; te.kind = TEX_ENGINE; te.w0 = zg1 * K; te.w1 = zf * K;
+      r3d_.polyTex(eng, 4, 0xff26262au, te);
+    }
+    // comme l'original : seul le flanc droit (rose) est dessiné, jamais le gauche
+    // (voitures des autres joueurs : carrosserie fermée, on ne voit pas les flammes à travers)
+    paint(right, 4, pink, f, u, zr, zf, yb, yr); r3d_.poly(bottom, 4, black);
+    if (closed) paint(left, 4, pink, f, u, zr, zf, yb, yr);
+  }
+  (void)dark; (void)grey;
+}
+
+// ------------------------------------------------------------------ décor autour du circuit
+void HdView::drawScenery(const Camera &c, int track, double hs) {
+  auto it = scenery_.find(track & 7);
+  if (it == scenery_.end()) it = scenery_.emplace(track & 7, buildScenery(tracks_[track & 7], params.density)).first;
+  const double gy = GROUND_RAW * hs;
+  const double fwx = std::sin(c.yaw), fwz = std::cos(c.yaw);
+  const double Lx = 0.5, Ly = 0.7, Lz = 0.55, Ll = std::sqrt(Lx * Lx + Ly * Ly + Lz * Lz);   // lumière (côté du soleil)
+  auto lit = [&](uint32_t col, const Vec3 &nrm) {
+    const double nl = std::sqrt(nrm.x * nrm.x + nrm.y * nrm.y + nrm.z * nrm.z);
+    const double d = nl > 1e-9 ? (nrm.x * Lx + nrm.y * Ly + nrm.z * Lz) / (nl * Ll) : 0;
+    return shadeARGB(col, 0.58 + 0.5 * std::max(0.0, d));
+  };
+  auto normal = [](const Vec3 *p, int n) {
+    Vec3 r{0, 0, 0};
+    for (int i = 0; i < n; i++) {
+      const Vec3 &a = p[i], &b = p[(i + 1) % n];
+      r.x += (a.y - b.y) * (a.z + b.z); r.y += (a.z - b.z) * (a.x + b.x); r.z += (a.x - b.x) * (a.y + b.y);
+    }
+    return r;
+  };
+  // face vue de devant seulement (sommets dans le sens qui donne une normale vers l'extérieur)
+  auto face = [&](const Vec3 *p, int n, uint32_t col, const TexInfo *tex = nullptr) {
+    Vec3 nr = normal(p, n);
+    if (nr.x * (c.pos.x - p[0].x) + nr.y * (c.pos.y - p[0].y) + nr.z * (c.pos.z - p[0].z) <= 0) return;
+    if (tex) r3d_.polyTex(p, n, lit(col, nr), *tex);
+    else r3d_.poly(p, n, lit(col, nr));
+  };
+  // pavé orienté : centre du bas (x, z), axes horizontaux a (longueur) et b (profondeur), hauteurs y0..y1
+  auto box = [&](double x, double z, double ax, double az, double hl, double hd, double y0, double y1, uint32_t col) {
+    const double bx = -az, bz = ax;
+    Vec3 q[8];
+    for (int i = 0; i < 8; i++) {
+      const double sa = (i & 1) ? hl : -hl, sb = (i & 2) ? hd : -hd;
+      q[i] = {x + ax * sa + bx * sb, (i & 4) ? y1 : y0, z + az * sa + bz * sb};
+    }
+    const int F[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+    for (auto &fc : F) { Vec3 p[4] = {q[fc[0]], q[fc[1]], q[fc[2]], q[fc[3]]}; face(p, 4, col); }
+  };
+  for (const SceneObj &o : it->second) {
+    const double dx = o.x - c.pos.x, dz = o.z - c.pos.z, dist = std::hypot(dx, dz);
+    const double rad = o.kind == SCENE_STAND ? 1100 : o.kind == SCENE_BOARD ? 400 : o.kind == SCENE_CAR ? 160 : 260 * o.size;
+    if (dist > (o.kind == SCENE_CAR ? 22000 : 42000)) continue;
+    const double along = dx * fwx + dz * fwz, side = std::fabs(dx * fwz - dz * fwx);
+    if (along < -rad || side > along * 1.9 + rad * 1.5) continue;   // derrière la caméra ou hors du champ
+    const uint32_t sd = o.seed;
+    if (o.kind == SCENE_CAR) {   // voiture garée : caisse, habitacle vitré, 4 roues, ombre
+      static const uint32_t BODY[8] = {0xffc0262au, 0xff2050b0u, 0xffe8e8e4u, 0xffe0b020u, 0xff2a7a3cu, 0xffa8acb0u, 0xff26282cu, 0xffd86018u};
+      const double k = o.size, hx = o.fx, hz = o.fz, sx = hz, sz = -hx;   // avant, côté
+      const uint32_t body = BODY[sd % 8], glass = 0xff34404cu;
+      const double L = 190 * k, Wd = 86 * k;
+      if (params.shadows && dist < 12000) {
+        Vec3 sh[4];
+        const double l2 = L * 0.55, w2 = Wd * 0.62;
+        for (int i = 0; i < 4; i++) {
+          const double a = (i == 0 || i == 3) ? l2 : -l2, b = (i < 2) ? w2 : -w2;
+          sh[i] = {o.x + hx * a + sx * b + 18 * k, gy + 1.5, o.z + hz * a + sz * b + 14 * k};
+        }
+        r3d_.polyAlpha(sh, 4, 0xff000000u, 0.3f);
+      }
+      if (dist < 14000)
+        for (int i = 0; i < 4; i++) {   // roues
+          const double a = (i & 1 ? 1 : -1) * L * 0.32, b = (i & 2 ? 1 : -1) * Wd * 0.44;
+          box(o.x + hx * a + sx * b, o.z + hz * a + sz * b, hx, hz, 17 * k, 9 * k, gy, gy + 34 * k, 0xff141414u);
+        }
+      // tronc de pyramide : bas (hl0, hd0) centré en d0 le long de la voiture, haut (hl1, hd1) en d1
+      auto prism = [&](double d0, double hl0, double hd0, double d1, double hl1, double hd1, double y0, double y1, uint32_t side, uint32_t top) {
+        Vec3 q[8];
+        for (int i = 0; i < 8; i++) {
+          const bool up = i & 4;
+          const double d = up ? d1 : d0, hl = up ? hl1 : hl0, hd = up ? hd1 : hd0;
+          const double sa = d + ((i & 1) ? hl : -hl), sb = (i & 2) ? hd : -hd;
+          q[i] = {o.x + hx * sa - hz * sb, up ? y1 : y0, o.z + hz * sa + hx * sb};
+        }
+        const int F[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+        for (int f = 0; f < 6; f++) { Vec3 pp[4] = {q[F[f][0]], q[F[f][1]], q[F[f][2]], q[F[f][3]]}; face(pp, 4, f == 1 ? top : side); }
+      };
+      prism(0, L / 2, Wd / 2, 0, L / 2 - 4 * k, Wd / 2 - 2 * k, gy + 14 * k, gy + 46 * k, body, body);   // caisse
+      prism(-L * 0.06, L * 0.27, Wd * 0.45, -L * 0.1, L * 0.17, Wd * 0.4, gy + 46 * k, gy + 82 * k, glass, body);   // habitacle vitré, toit
+      if (dist < 9000)
+        for (int sgn = -1; sgn <= 1; sgn += 2) {   // phares (avant) et feux (arrière)
+          for (int e = -1; e <= 1; e += 2) {
+            const double a = sgn * (L / 2 + 0.5), b = e * Wd * 0.33, w = Wd * 0.1;
+            const double px = o.x + hx * a - hz * b, pz = o.z + hz * a + hx * b;
+            Vec3 lq[4] = {{px - hz * w, gy + 32 * k, pz + hx * w}, {px + hz * w, gy + 32 * k, pz - hx * w},
+                          {px + hz * w, gy + 41 * k, pz - hx * w}, {px - hz * w, gy + 41 * k, pz + hx * w}};
+            if (sgn < 0) { std::swap(lq[0], lq[1]); std::swap(lq[2], lq[3]); }
+            face(lq, 4, sgn > 0 ? 0xfff4f0d8u : 0xffc01818u);
+          }
+        }
+      continue;
+    }
+    if (o.kind == SCENE_PINE || o.kind == SCENE_TREE) {
+      const double k = o.size;
+      static const uint32_t GREENS[4] = {0xff2f6a2cu, 0xff3a7a30u, 0xff2a5c34u, 0xff4a8236u};
+      const uint32_t leaf = GREENS[sd % 4], trunk = 0xff5a3e26u;
+      const bool farLod = dist > 15000;
+      if (dist < 9000 && params.shadows) {   // ombre au pied
+        Vec3 sh[8];
+        for (int i = 0; i < 8; i++) { double a = i * 0.785398; sh[i] = {o.x + std::cos(a) * 125 * k + 40 * k, gy + 1.5, o.z + std::sin(a) * 125 * k + 30 * k}; }
+        r3d_.polyAlpha(sh, 8, 0xff000000u, 0.28f);
+      }
+      if (!farLod) box(o.x, o.z, 1, 0, 9 * k, 9 * k, gy, gy + (o.kind == SCENE_PINE ? 70 : 115) * k, trunk);
+      const int N = farLod ? 5 : 7;
+      auto ring = [&](double y, double r, Vec3 *v, double rot) {
+        for (int i = 0; i < N; i++) { double a = rot + i * 6.2831853 / N; v[i] = {o.x + std::cos(a) * r, y, o.z + std::sin(a) * r}; }
+      };
+      const double rot = (sd >> 8) % 100 * 0.06;
+      if (o.kind == SCENE_PINE) {   // sapin : cônes empilés
+        const double L[3][3] = {{55, 125, 160}, {150, 98, 145}, {240, 68, 140}};
+        for (int l = farLod ? 1 : 0; l < 3; l++) {
+          Vec3 v[8]; ring(gy + L[l][0] * k, L[l][1] * k * (farLod ? 1.25 : 1), v, rot + l * 0.4);
+          const Vec3 top{o.x, gy + (L[l][0] + L[l][2]) * k, o.z};
+          for (int i = 0; i < N; i++) { Vec3 t[3] = {v[(i + 1) % N], v[i], top}; face(t, 3, shadeARGB(leaf, 0.92 + 0.06 * l)); }
+          if (!farLod) { Vec3 b[8]; for (int i = 0; i < N; i++) b[i] = v[i]; face(b, N, shadeARGB(leaf, 0.7)); }
+        }
+      } else {   // feuillu : boule à facettes
+        Vec3 r0[8], r1[8], r2[8];
+        ring(gy + 135 * k, 85 * k, r0, rot); ring(gy + 215 * k, 135 * k, r1, rot + 0.3); ring(gy + 305 * k, 115 * k, r2, rot);
+        const Vec3 bot{o.x, gy + 105 * k, o.z}, top{o.x, gy + 375 * k, o.z};
+        const uint32_t lf = shadeARGB(leaf, 1.08);
+        for (int i = 0; i < N; i++) {
+          const int j = (i + 1) % N;
+          Vec3 a[3] = {r0[i], r0[j], bot}; face(a, 3, lf);
+          Vec3 b[4] = {r0[j], r0[i], r1[i], r1[j]}; face(b, 4, lf);
+          Vec3 cq[4] = {r1[j], r1[i], r2[i], r2[j]}; face(cq, 4, lf);
+          Vec3 d[3] = {r2[j], r2[i], top}; face(d, 3, lf);
+        }
+      }
+    } else if (o.kind == SCENE_BOARD) {   // panneau publicitaire sur deux poteaux, face au circuit
+      static const uint32_t COLS[6] = {0xffc82020u, 0xff1f4fb8u, 0xff1d8a3au, 0xfff0b818u, 0xff202020u, 0xffe0601cu};
+      const double ax = o.fz, az = -o.fx;   // le long du panneau
+      const double L = o.len, y0 = gy + 85, y1 = y0 + 150;
+      for (int sgn = -1; sgn <= 1; sgn += 2)
+        box(o.x + ax * sgn * L * 0.36, o.z + az * sgn * L * 0.36, ax, az, 7, 7, gy, y0 + 20, 0xff8a8a8au);
+      const double hx = ax * L / 2, hz = az * L / 2, bx = -o.fx * 10, bz = -o.fz * 10;
+      Vec3 fr[4] = {{o.x + hx, y0, o.z + hz}, {o.x - hx, y0, o.z - hz}, {o.x - hx, y1, o.z - hz}, {o.x + hx, y1, o.z + hz}};
+      TexInfo t; t.kind = TEX_BOARD; t.o = {o.x + hx, y0, o.z + hz}; t.u = {-ax, 0, -az}; t.v = {0, 1, 0};
+      t.s0 = 0; t.s1 = L; t.w0 = 0; t.w1 = 150; t.r = double(sd % 1000);
+      Vec3 nr = normal(fr, 4);
+      if (nr.x * (c.pos.x - fr[0].x) + nr.z * (c.pos.z - fr[0].z) > 0) r3d_.polyTex(fr, 4, COLS[sd % 6], t);
+      else {   // dos et tranche
+        Vec3 bk[4] = {{o.x - hx + bx, y0, o.z - hz + bz}, {o.x + hx + bx, y0, o.z + hz + bz}, {o.x + hx + bx, y1, o.z + hz + bz}, {o.x - hx + bx, y1, o.z - hz + bz}};
+        face(bk, 4, 0xff9a9a9au);
+      }
+      Vec3 tp[4] = {{o.x + hx, y1, o.z + hz}, {o.x - hx, y1, o.z - hz}, {o.x - hx + bx, y1, o.z - hz + bz}, {o.x + hx + bx, y1, o.z + hz + bz}};
+      face(tp, 4, 0xffbdbdbdu);
+    } else {   // tribune : gradins garnis de public, murs, toit sur poteaux
+      static const uint32_t ROOF[4] = {0xffb82828u, 0xff2a4ea8u, 0xffe8e8e8u, 0xff2f7a3au};
+      const double ax = o.fz, az = -o.fx;   // le long de la tribune
+      const double fx = o.fx, fz = o.fz, L = o.len, hl = L / 2;
+      const int R = 7;
+      const double D = 95, RISE = 55, base = gy + 40;
+      auto P = [&](double a, double depth, double y) { return Vec3{o.x + ax * a - fx * depth, y, o.z + az * a - fz * depth}; };
+      const uint32_t concrete = 0xffa6a39cu, dark = 0xff74716cu;
+      { Vec3 q[4] = {P(-hl, 0, gy), P(hl, 0, gy), P(hl, 0, base), P(-hl, 0, base)}; face(q, 4, dark); }   // muret avant
+      for (int r = 0; r < R; r++) {
+        const double y = base + r * RISE, d0 = r * D, d1 = d0 + D;
+        { Vec3 q[4] = {P(-hl, d0, y), P(-hl, d1, y), P(hl, d1, y), P(hl, d0, y)}; face(q, 4, concrete); }   // marche
+        if (r + 1 < R) { Vec3 q[4] = {P(-hl, d1, y), P(hl, d1, y), P(hl, d1, y + RISE), P(-hl, d1, y + RISE)}; face(q, 4, dark); }
+        if (dist < 26000) {   // rangée de spectateurs
+          Vec3 q[4] = {P(-hl + 10, d0 + 40, y), P(hl - 10, d0 + 40, y), P(hl - 10, d0 + 40, y + 58), P(-hl + 10, d0 + 40, y + 58)};
+          TexInfo t; t.kind = TEX_CROWD; t.o = P(-hl + 10, d0 + 40, y); t.u = {ax, 0, az}; t.v = {0, 1, 0};
+          t.r = double(r * 131 + sd % 997);
+          Vec3 nr = normal(q, 4);
+          if (nr.x * (c.pos.x - q[0].x) + nr.y * (c.pos.y - q[0].y) + nr.z * (c.pos.z - q[0].z) > 0) r3d_.polyTex(q, 4, 0xff8a7c74u, t);
+        }
+      }
+      const double dB = R * D, yTop = base + (R - 1) * RISE, yRoof = yTop + 190;
+      { Vec3 q[4] = {P(hl, dB, gy), P(-hl, dB, gy), P(-hl, dB, yRoof), P(hl, dB, yRoof)}; face(q, 4, concrete); }   // mur du fond
+      for (int sgn = -1; sgn <= 1; sgn += 2) {   // flancs
+        Vec3 q[5] = {P(sgn * hl, 0, gy), P(sgn * hl, dB, gy), P(sgn * hl, dB, yRoof), P(sgn * hl, dB * 0.15, yTop + 40), P(sgn * hl, 0, base)};
+        if (sgn > 0) face(q, 5, concrete);
+        else { Vec3 w[5] = {q[4], q[3], q[2], q[1], q[0]}; face(w, 5, concrete); }
+      }
+      const uint32_t roof = ROOF[sd % 4];
+      const double yF = yRoof - 25;   // toit légèrement incliné vers l'avant, dépassant au-dessus des premiers rangs
+      { Vec3 q[4] = {P(-hl - 30, -60, yF), P(hl + 30, -60, yF), P(hl + 30, dB + 20, yRoof), P(-hl - 30, dB + 20, yRoof)}; face(q, 4, roof); }
+      { Vec3 q[4] = {P(-hl - 30, -60, yF - 14), P(-hl - 30, dB + 20, yRoof - 14), P(hl + 30, dB + 20, yRoof - 14), P(hl + 30, -60, yF - 14)}; face(q, 4, shadeARGB(roof, 0.7)); }
+      { Vec3 q[4] = {P(-hl - 30, -60, yF - 14), P(hl + 30, -60, yF - 14), P(hl + 30, -60, yF), P(-hl - 30, -60, yF)}; face(q, 4, 0xffe8e8e8u); }   // bandeau
+      for (int i = 0; i <= 3; i++) {   // poteaux avant
+        const double a = -hl + 20 + i * (L - 40) / 3;
+        Vec3 pp = P(a, -40, 0);
+        box(pp.x, pp.z, ax, az, 8, 8, gy, yF - 14, 0xff8e8e8eu);
+      }
+    }
+  }
 }
 
 void HdView::renderScene(const Pose &p, int track, uint32_t *out, int W, int H, double focal, double cx, double cy,
                          const Machine &m, const OppPose *opp) {
   const HdParams &P = params;
-  // couleurs : palette courante du jeu
-  auto pal = [&](int i) { return m.paletteARGB(i); };
-  uint32_t sky = pal(7), ground = pal(13), hill = pal(5), hillFar = shadeARGB(pal(5), 1.25), road = pal(1),
-           road2 = pal(2), line = pal(3), line2 = pal(9), wall = pal(10), wall2 = pal(15);
-
   // caméra : position de la voiture + œil, dans le repère de la voiture
   Camera c;
   double pitch = P.pitchSign * p.pitch, roll = P.rollSign * p.roll;
@@ -397,20 +772,33 @@ void HdView::renderScene(const Pose &p, int track, uint32_t *out, int W, int H, 
   c.pos = {p.x + sy * P.eyeFwd + cyw * P.eyeSide, p.y * HSCALE / 0.5 + P.eyeUp, p.z + cyw * P.eyeFwd - sy * P.eyeSide};
   // suspension très comprimée (réception de saut) : l'œil ne doit jamais passer sous la route
   {
-    double yRaw = 0;
-    if (surfaceRaw(tracks_[track & 7], c.pos.x, c.pos.z, p.y * 2, yRaw))
-      if (c.pos.y < yRaw * HSCALE + P.minClearance) { eyeLift_ = std::max(eyeLift_, yRaw * HSCALE + P.minClearance - c.pos.y); clampCount++; }
+    // (ni sous le sol hors piste, après une grosse chute : on verrait le dessous du décor)
+    double yRaw = 0, floor = GROUND_RAW * HSCALE;
+    if (surfaceRaw(tracks_[track & 7], c.pos.x, c.pos.z, p.y * 2, yRaw)) floor = std::max(floor, yRaw * HSCALE);
+    if (c.pos.y < floor + P.minClearance) { eyeLift_ = std::max(eyeLift_, floor + P.minClearance - c.pos.y); clampCount++; }
   }
   c.pos.y += eyeLift_;
   eyeLift_ *= 0.85;   // la remontée de l'œil retombe progressivement (pas de saut de caméra)
   c.yaw = p.yaw + P.yawOffset; c.pitch = pitch + P.pitchOffset; c.roll = roll;
   c.focal = focal; c.focalY = focal * P.aspect; c.cx = cx; c.cy = cy; c.nearZ = 2;
+  drawWorld(c, track, out, W, H, m, opp);
+}
+
+void HdView::drawWorld(const Camera &c, int track, uint32_t *out, int W, int H, const Machine &m, const OppPose *opp) {
+  const HdParams &P = params;
+  // couleurs : palette courante du jeu
+  auto pal = [&](int i) { return palOf(m, i); };
+  uint32_t sky = pal(7), ground = pal(13), hill = pal(5), hillFar = shadeARGB(pal(5), 1.25), road = pal(1),
+           road2 = pal(2), line = pal(3), line2 = pal(9), wall = pal(10), wall2 = pal(15);
+  const double HSCALE = P.hScale;
   r3d_.begin(W, H, c, sky);
+  r3d_.setSky(P.sky, sky, frame_ / 50.0);
 
   // sol et collines (au plus loin, dans l'ordre)
   const double gy = GROUND_RAW * HSCALE, R = 2e6;
   Vec3 g[4] = {{c.pos.x - R, gy, c.pos.z - R}, {c.pos.x + R, gy, c.pos.z - R}, {c.pos.x + R, gy, c.pos.z + R}, {c.pos.x - R, gy, c.pos.z + R}};
-  r3d_.polyFar(g, 4, ground, 1e-12f);
+  if (P.highDetail) { TexInfo tg; tg.kind = TEX_GROUND; r3d_.polyFarTex(g, 4, ground, 1e-12f, tg, gy); }
+  else r3d_.polyFar(g, 4, ground, 1e-12f);
   const double dist = 1e6;
   for (int l = 1; l >= 0; l--) {
     for (int i = 0; i < 64; i++) {
@@ -423,10 +811,16 @@ void HdView::renderScene(const Pose &p, int track, uint32_t *out, int W, int H, 
     }
   }
 
+  if (P.scenery) drawScenery(c, track, HSCALE);   // tribunes, panneaux, arbres
+
   // circuit
   const Track &tr = tracks_[track & 7];
   const size_t n = tr.secs.size();
-  const double lw = 0.035;    // largeur des lignes de bord (fraction de la largeur de route)
+  const double lw = 0.0175;   // largeur des lignes de bord (fraction de la largeur de route)
+  // ligne de départ : l'original la trace à la dernière frontière de section de la pièce de départ
+  // (drapeau $6EA7C posé en $52568, recopié dans la liste de polygones en $53DCE)
+  size_t startSec = 0;
+  while (startSec + 1 < n && tr.secs[startSec + 1].piece == tr.startPiece) startSec++;
   for (size_t i = 0; i < n; i++) {
     const Section &A = tr.secs[i], &B = tr.secs[(i + 1) % n];
     uint32_t lc = (i & 1) ? line : line2;   // lignes de bord : jaune et rouge sombre, une section sur deux (comme l'original)
@@ -436,13 +830,22 @@ void HdView::renderScene(const Pose &p, int track, uint32_t *out, int W, int H, 
     auto wallQuad = [&](const Vec3 &p0, const Vec3 &p1) {
       if (p0.y <= gy + 0.5 && p1.y <= gy + 0.5) return;
       Vec3 q[4] = {p0, p1, {p1.x, gy, p1.z}, {p0.x, gy, p0.z}};
-      r3d_.poly(q, 4, wc);
+      if (P.highDetail) { TexInfo tw; tw.kind = TEX_WALL; r3d_.polyTex(q, 4, wc, tw); }
+      else r3d_.poly(q, 4, wc);
     };
     wallQuad(aL, bL);
     wallQuad(bR, aR);
     // dessus de la route (pas pour les sections verticales des sauts), couleur alternée par pièce
     double horiz = std::hypot((B.lx + B.rx - A.lx - A.rx) * 0.5, (B.lz + B.rz - A.lz - A.rz) * 0.5);
     if (horiz < 1) continue;
+    // pan d'un saut (marche, face de la rampe, pont levé) : pente de plus de 50° -> noir, comme le
+    // rendu d'origine (les pentes où l'on roule restent sous 30° : Roller Coaster, Ski Jump)
+    if (std::fabs((B.ly + B.ry - A.ly - A.ry) * 0.5) * HSCALE > 1.2 * horiz) {
+      Vec3 f1[3] = {aL, aR, bR}, f2[3] = {aL, bR, bL};
+      r3d_.poly(f1, 3, pal(0));
+      r3d_.poly(f2, 3, pal(0));
+      continue;
+    }
     uint32_t rc = (A.piece & 1) ? road2 : road;
     auto lerp = [](const Vec3 &a, const Vec3 &b, double t) { return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t}; };
     Vec3 aL1 = lerp(aL, aR, lw), aR1 = lerp(aR, aL, lw), bL1 = lerp(bL, bR, lw), bR1 = lerp(bR, bL, lw);
@@ -450,22 +853,435 @@ void HdView::renderScene(const Pose &p, int track, uint32_t *out, int W, int H, 
     // en triangles : sur un virage relevé, les 4 coins d'une section ne sont pas coplanaires
     auto quad = [&](const Vec3 *q, uint32_t col) {
       Vec3 t1[3] = {q[0], q[1], q[2]}, t2[3] = {q[0], q[2], q[3]};
-      r3d_.poly(t1, 3, col);
-      r3d_.poly(t2, 3, col);
+      if (P.highDetail) {
+        // repère de la route : u = travers (bord gauche -> droit), pour les traces de pneus
+        TexInfo tr; tr.kind = TEX_ROAD;
+        double wl = std::sqrt((aR.x - aL.x) * (aR.x - aL.x) + (aR.y - aL.y) * (aR.y - aL.y) + (aR.z - aL.z) * (aR.z - aL.z));
+        if (wl > 1e-6) { tr.o = aL; tr.u = {(aR.x - aL.x) / wl, (aR.y - aL.y) / wl, (aR.z - aL.z) / wl}; tr.s0 = 0; tr.s1 = wl; }
+        r3d_.polyTex(t1, 3, col, tr);
+        r3d_.polyTex(t2, 3, col, tr);
+      } else {
+        r3d_.poly(t1, 3, col);
+        r3d_.poly(t2, 3, col);
+      }
     };
     quad(mid, rc);
     Vec3 ql[4] = {aL, aL1, bL1, bL};
     quad(ql, lc);
     Vec3 qr[4] = {aR1, aR, bR, bR1};
     quad(qr, lc);
+    if (i == startSec) {   // ligne de départ : trait blanc en travers de la route
+      double fx = (bL.x + bR.x - aL.x - aR.x) / 2, fz = (bL.z + bR.z - aL.z - aR.z) / 2, fl = std::hypot(fx, fz);
+      double k = std::min(1.0, START_LINE_W / std::max(1.0, fl));
+      Vec3 s0 = aL, s1 = aR, s2 = lerp(aR, bR, k), s3 = lerp(aL, bL, k);
+      for (Vec3 *v : {&s0, &s1, &s2, &s3}) v->y += 2.5;   // juste au-dessus du revêtement (sans scintillement)
+      Vec3 sq[4] = {s0, s1, s2, s3};
+      r3d_.poly(sq, 4, pal(15));
+    }
   }
-  if (opp && opp->valid) addCar(*opp, HSCALE, m);
+  if (opp && opp->valid) {
+    if (P.shadows) addShadow(*opp, HSCALE, track);
+    addCar(*opp, HSCALE, m);
+  }
+  for (auto &g : ghosts) {   // autres joueurs (course à plusieurs) et place de leur nom au-dessus de la voiture
+    g.onScreen = false;
+    if (!g.pose.valid) continue;
+    // hauteur envoyée : point de référence de la physique, en général 40 à 220 unités sous la route
+    // dessinée ; voiture posée sur la route (sauf en l'air, ou tombée loin sous une route qui la survole)
+    {
+      const int keepHint = hint_;
+      double s;
+      if (surfaceRaw(tracks_[track & 7], g.pose.x, g.pose.z, g.pose.yRaw, s) && s > g.pose.yRaw && s - g.pose.yRaw < 260) g.pose.yRaw = s;
+      hint_ = keepHint;
+    }
+    if (P.shadows) addShadow(g.pose, HSCALE, track);
+    {   // roues : rotation propre à chaque joueur, selon la distance parcourue depuis l'image précédente
+      GhostWheels &gw = ghostWheels_[g.id];
+      // choc signalé par ce joueur (numéro de choc changé) : étincelles chez nous aussi
+      if (gw.impactStamp < 0) gw.impactStamp = g.impactStamp;
+      else if (g.impactStamp != gw.impactStamp) {
+        gw.impactStamp = g.impactStamp;
+        if (P.particles && g.impact > 0)
+          spawnImpact({g.pose.x + g.pose.fwd.x * 50, g.pose.yRaw * HSCALE + 8, g.pose.z + g.pose.fwd.z * 50}, g.impact, g.pose.fwd);
+      }
+      double step = 0;
+      if (gw.prev.valid) {
+        double dx = g.pose.x - gw.prev.x, dy = (g.pose.yRaw - gw.prev.yRaw) * HSCALE, dz = g.pose.z - gw.prev.z;
+        step = dx * g.pose.fwd.x + dy * g.pose.fwd.y + dz * g.pose.fwd.z;
+        if (std::fabs(step) > 400) step = 0;   // saut (grue, nouveau départ)
+      }
+      gw.prev = g.pose;
+      const double CAP = 0.2, dphi = step / (25 * 0.55);
+      const double keepRoll = oppRoll_, keepStep = oppRollStep_, keepContrast = oppRollContrast_;
+      oppRollStep_ = std::clamp(dphi, -CAP, CAP);
+      oppRollContrast_ = std::clamp(1 - (std::fabs(dphi) - CAP) / 4, 0.6, 1.0);
+      gw.roll = std::fmod(gw.roll + oppRollStep_, 2 * 3.14159265358979 * 1000);
+      oppRoll_ = gw.roll;
+      addCar(g.pose, HSCALE, m, true);
+      oppRoll_ = keepRoll; oppRollStep_ = keepStep; oppRollContrast_ = keepContrast;
+    }
+    if (g.boost) addFlames(g.pose, HSCALE, int(&g - ghosts.data()));
+    Vec3 top{g.pose.x, g.pose.yRaw * HSCALE + 90, g.pose.z};
+    Vec3 q = r3d_.toCam(top);
+    g.dist = std::sqrt((g.pose.x - c.pos.x) * (g.pose.x - c.pos.x) + (g.pose.z - c.pos.z) * (g.pose.z - c.pos.z));
+    if (q.z > 20) {
+      g.sx = c.cx + c.focal * q.x / q.z; g.sy = c.cy - c.focalY * q.y / q.z;
+      g.onScreen = g.sx > -50 && g.sx < W + 50 && g.sy > -20 && g.sy < H;
+    }
+  }
+  if (P.particles) drawParticles(c);
+  r3d_.setAntialias(P.antialias && W > 400);
   r3d_.finish(out);
+}
+
+// ombre d'une voiture : rectangle sombre semi-transparent posé sur la route sous la voiture (chaque
+// coin à la hauteur de la route), plus grand et plus pâle quand la voiture est en l'air
+void HdView::addShadow(const OppPose &o, double hs, int track) {
+  const Track &T = tracks_[track & 7];
+  const int keepHint = hint_;
+  double s;
+  bool onRoad = surfaceRaw(T, o.x, o.z, o.yRaw, s);
+  if (!onRoad || s > o.yRaw + 80) s = GROUND_RAW;   // hors de la route : ombre sur le sol
+  const double height = o.yRaw - s;                 // hauteur brute au-dessus de la surface
+  if (height < -120) { hint_ = keepHint; return; }
+  const double up = std::max(0.0, height);
+  const float alpha = float(0.55 * std::clamp(1 - up / 1400, 0.2, 1.0));
+  const double grow = 1 + up / 2500, K = 0.55;
+  double fx = o.fwd.x, fz = o.fwd.z, fl = std::hypot(fx, fz);
+  if (fl < 1e-6) { hint_ = keepHint; return; }
+  fx /= fl; fz /= fl;
+  const double rx = fz, rz = -fx;   // droite de la voiture (à plat)
+  const double W2 = 58 * K * grow, Z0 = -128 * K * grow, Z1 = 158 * K * grow;
+  const double cxs[4] = {-W2, W2, W2, -W2}, czs[4] = {Z0, Z0, Z1, Z1};
+  Vec3 q[4];
+  for (int k = 0; k < 4; k++) {
+    double x = o.x + rx * cxs[k] + fx * czs[k], z = o.z + rz * cxs[k] + fz * czs[k], y = s;
+    double sc;
+    if (onRoad && surfaceRaw(T, x, z, s, sc) && std::fabs(sc - s) < 300) y = sc;
+    q[k] = {x, y * hs + 2.0, z};
+  }
+  hint_ = keepHint;
+  r3d_.polyAlpha(q, 4, 0xff000000u, alpha);
+}
+
+void HdView::impactAt(double x, double yRaw, double z, int strength) {
+  if (params.particles) spawnImpact({x, yRaw * params.hScale + 8, z}, strength, {0, 0, 0});
+}
+
+// choc : gerbe d'étincelles (vers le haut et dans le sens du choc) et bouffées de fumée
+void HdView::spawnImpact(const Vec3 &at, int strength, const Vec3 &dir) {
+  auto rnd = [&] { partSeed_ = partSeed_ * 1103515245u + 12345u; return double((partSeed_ >> 8) & 0xffff) / 65535.0; };
+  const int sparks = std::clamp(6 + strength * 2, 6, 60), puffs = std::clamp(1 + strength / 6, 1, 6);
+  for (int i = 0; i < sparks; i++) {
+    double a = rnd() * 6.2831853, sp = 3 + rnd() * (4 + strength * 0.15);
+    Vec3 v{std::cos(a) * sp + dir.x * 4, 2 + rnd() * 6, std::sin(a) * sp + dir.z * 4};
+    float life = float(12 + rnd() * 18);
+    particles_.push_back({{at.x + (rnd() - 0.5) * 30, at.y + rnd() * 6, at.z + (rnd() - 0.5) * 30}, v, life, life, float(0.7 + rnd() * 0.6), 0});
+  }
+  for (int i = 0; i < puffs; i++) {
+    float life = float(45 + rnd() * 40);
+    particles_.push_back({{at.x + (rnd() - 0.5) * 40, at.y + rnd() * 10, at.z + (rnd() - 0.5) * 40},
+                          {(rnd() - 0.5) * 1.2, 0.6 + rnd() * 0.8, (rnd() - 0.5) * 1.2}, life, life, float(10 + rnd() * 8), 1});
+  }
+  if (particles_.size() > 600) particles_.erase(particles_.begin(), particles_.begin() + long(particles_.size() - 600));
+}
+
+void HdView::stepParticles(double dt) {
+  for (auto &q : particles_) {
+    q.p.x += q.v.x * dt; q.p.y += q.v.y * dt; q.p.z += q.v.z * dt;
+    if (q.kind == 0) { q.v.y -= 0.9 * dt; q.v.x *= std::pow(0.97, dt); q.v.z *= std::pow(0.97, dt); }
+    else { q.v.x *= std::pow(0.96, dt); q.v.z *= std::pow(0.96, dt); q.v.y *= std::pow(0.985, dt); q.size += float(0.5 * dt); }
+    q.life -= float(dt);
+  }
+  particles_.erase(std::remove_if(particles_.begin(), particles_.end(), [](const Particle &q) { return q.life <= 0; }), particles_.end());
+}
+
+void HdView::drawParticles(const Camera &c) {
+  const Vec3 R{std::cos(c.yaw), 0, -std::sin(c.yaw)};
+  for (const auto &q : particles_) {
+    const float f = q.life / q.maxLife;
+    if (q.kind == 0) {   // étincelle : traînée du jaune au rouge
+      Vec3 tail{q.p.x - q.v.x * 1.5, q.p.y - q.v.y * 1.5, q.p.z - q.v.z * 1.5};
+      double w = q.size;
+      Vec3 s[4] = {{q.p.x - R.x * w, q.p.y + w, q.p.z - R.z * w}, {q.p.x + R.x * w, q.p.y - w, q.p.z + R.z * w},
+                   {tail.x + R.x * w * 0.4, tail.y - w * 0.4, tail.z + R.z * w * 0.4}, {tail.x - R.x * w * 0.4, tail.y + w * 0.4, tail.z - R.z * w * 0.4}};
+      uint32_t g = uint32_t(120 + 135 * f), b = uint32_t(60 * f * f);
+      r3d_.poly(s, 4, 0xff000000u | 0xff0000u | (g << 8) | b);
+    } else {   // fumée : carré face à la caméra, gris, de plus en plus pâle
+      // près de la caméra : de plus en plus transparente (pas de voile sur tout l'écran)
+      const double dx = q.p.x - c.pos.x, dy = q.p.y - c.pos.y, dz = q.p.z - c.pos.z, dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+      const float near = float(std::clamp((dist - 80) / 220, 0.0, 1.0));
+      if (near <= 0) continue;
+      double w = q.size;
+      Vec3 s[8];   // bouffée : octogone face à la caméra
+      for (int i = 0; i < 8; i++) {
+        double a = i * 0.785398 + 0.39, cx = std::cos(a) * w, cy = std::sin(a) * w;
+        s[i] = {q.p.x + R.x * cx, q.p.y + cy, q.p.z + R.z * cx};
+      }
+      r3d_.polyAlpha(s, 8, 0xff9a9a9au, 0.45f * f * near);
+    }
+  }
+}
+
+// image de cockpit (proportions 320x200) agrandie à l'écran, avec l'étirement 16/9 du cockpit d'origine
+void HdView::scaleCockpit(const HdImage &ck, std::vector<uint32_t> &dst, int W, int H, double s, double ox) {
+  dst.clear();
+  if (ck.px.empty()) return;
+  dst.assign(size_t(W) * H, 0);
+  {
+    const double xa = 32, xb = 288, la = ox + xa * s, lb = ox + xb * s;
+    std::vector<double> us(static_cast<size_t>(W));
+    for (int x = 0; x < W; x++) {
+      const double X = x + 0.5;
+      us[size_t(x)] = X < la ? (la > 0 ? X / la * xa : 0) : X >= lb ? xb + (X - lb) / std::max(1.0, W - lb) * (320 - xb) : xa + (X - la) / s;
+    }
+    for (int y = 0; y < H; y++) {
+      const double v = std::clamp((y + 0.5) / s / 200.0 * ck.h - 0.5, 0.0, ck.h - 1.0);
+      const int v0 = int(v), v1 = std::min(v0 + 1, ck.h - 1);
+      const double fv = v - v0;
+      for (int x = 0; x < W; x++) {
+        const double u = std::clamp(us[size_t(x)] / 320.0 * ck.w - 0.5, 0.0, ck.w - 1.0);
+        const int u0 = int(u), u1 = std::min(u0 + 1, ck.w - 1);
+        const double fu = u - u0;
+        const uint32_t q[4] = {ck.px[size_t(v0) * ck.w + u0], ck.px[size_t(v0) * ck.w + u1], ck.px[size_t(v1) * ck.w + u0], ck.px[size_t(v1) * ck.w + u1]};
+        const double wq[4] = {(1 - fu) * (1 - fv), fu * (1 - fv), (1 - fu) * fv, fu * fv};
+        double acc[4] = {0, 0, 0, 0};
+        for (int k = 0; k < 4; k++) {
+          const double a = (q[k] >> 24) / 255.0 * wq[k];
+          acc[0] += a; acc[1] += ((q[k] >> 16) & 255) * a; acc[2] += ((q[k] >> 8) & 255) * a; acc[3] += (q[k] & 255) * a;
+        }
+        if (acc[0] <= 0.004) continue;
+        dst[size_t(y) * W + x] = uint32_t(std::min(255.0, acc[0] * 255)) << 24 | uint32_t(acc[1] / acc[0]) << 16 |
+                                      uint32_t(acc[2] / acc[0]) << 8 | uint32_t(acc[3] / acc[0]);
+      }
+    }
+  }
+}
+
+// cockpit fixe remplacé par hd/cockpit.png. Le cockpit du jeu reste la référence : là où il est
+// comme au début de la course, on montre l'image HD ; ce qui a changé (fissure des dégâts, textes,
+// sprites sans image HD) est dessiné par-dessus. Dans les afficheurs et la barre de vitesse, l'image
+// HD sert de fond et les chiffres / la barre du jeu (pixels plus sombres ou plus clairs que le fond)
+// sont posés dessus.
+// images du cockpit à la taille de l'écran (de nouveau après F2 : images rechargées)
+void HdView::scaleCockpitImages(int W, int H, double s, double ox) {
+  const HdImage &ck = assets.cockpit;
+  if (ckW_ != W || ckH_ != H || ckData_ != ck.px.data() || ckFrontData_ != assets.cockpitFront.px.data() ||
+      ckBackData_ != assets.cockpitBack.px.data() || ckScaled_.size() != size_t(W) * H) {
+    ckW_ = W; ckH_ = H; ckData_ = ck.px.data(); ckFrontData_ = assets.cockpitFront.px.data(); ckBackData_ = assets.cockpitBack.px.data();
+    tubeTop_.clear(); crackHash_ = 0;
+    scaleCockpit(ck, ckScaled_, W, H, s, ox);
+    scaleCockpit(assets.cockpitFront, ckFront_, W, H, s, ox);
+    scaleCockpit(assets.cockpitBack, ckBack_, W, H, s, ox);
+  }
+}
+
+void HdView::blendImage(const std::vector<uint32_t> &img, uint32_t *out, size_t n) {
+  if (img.size() != n) return;
+  for (size_t i = 0; i < n; i++) {
+    const uint32_t h = img[i], a = h >> 24;
+    if (!a) continue;
+    if (a >= 255) { out[i] = h; continue; }
+    const uint32_t d = out[i];
+    auto mix = [&](int sh) { return ((((h >> sh) & 255) * a + ((d >> sh) & 255) * (255 - a)) / 255) << sh; };
+    out[i] = 0xff000000u | mix(16) | mix(8) | mix(0);
+  }
+}
+
+void HdView::drawCockpitHd(const Machine &m, uint32_t *out, int W, int H, double s, double ox) {
+  const HdImage &ck = assets.cockpit;
+  scaleCockpitImages(W, H, s, ox);
+  // cockpit en index de la palette du jeu (indépendant des fondus de couleurs) ; 255 : transparent
+  uint32_t pal[16];
+  int distinct = 0;
+  for (int i = 0; i < 16; i++) {
+    pal[i] = m.paletteARGB(i);
+    bool seen = false;
+    for (int j = 0; j < i; j++) seen |= pal[j] == pal[i];
+    distinct += !seen;
+  }
+  ckIdx_.resize(overlay_.size());
+  for (size_t i = 0; i < overlay_.size(); i++) {
+    uint8_t k = 255;
+    if (overlay_[i]) for (int j = 0; j < 16; j++) if (pal[j] == overlay_[i]) { k = uint8_t(j); break; }
+    ckIdx_[i] = k;
+  }
+  // cockpit de référence (ce qui ne change pas pendant la course) : relevé peu après le départ, avec
+  // une palette normale (pas pendant un fondu) ; relevé de nouveau s'il ne correspond plus (trop de
+  // différences : écran pas encore complet au moment du relevé)
+  if (ckRefFrames_ < 12) ckRefFrames_++;
+  if (ckRefFrames_ >= 12 && ckRef_.size() != ckIdx_.size() && distinct >= 12) ckRef_ = ckIdx_;
+  if (ckRef_.size() == ckIdx_.size()) {
+    int diff = 0, tot = 0;
+    for (int y = 150; y < 200; y++)   // tableau de bord (hors afficheurs) : ne doit presque pas changer
+      for (int x = 0; x < 320; x += 2) { tot++; diff += ckIdx_[size_t(y) * 320 + x] != ckRef_[size_t(y) * 320 + x]; }
+    if (diff * 5 > tot) { ckRef_.clear(); ckRefFrames_ = 0; }
+  }
+  const bool ref = ckRef_.size() == ckIdx_.size();
+  const uint32_t skyC = pal[7];
+  // afficheurs (2 lignes à gauche, 2 à droite) et barre de vitesse, en pixels de l'écran d'origine
+  struct Zone { int x0, y0, x1, y1; uint32_t bg; };
+  Zone zones[5] = {{37, 178, 86, 186, 0}, {37, 188, 86, 196, 0}, {234, 178, 283, 186, 0}, {234, 188, 283, 196, 0}, {96, 173, 225, 177, 0}};
+
+  static uint8_t zoneOf[320 * 200];
+  std::memset(zoneOf, 0, sizeof zoneOf);
+  auto luma = [](uint32_t c) { return int((c >> 16) & 255) * 77 + int((c >> 8) & 255) * 150 + int(c & 255) * 29 >> 8; };
+  for (int k = 0; k < 5; k++) {   // fond de la zone : couleur la plus fréquente
+    Zone &z = zones[k];
+    std::map<uint32_t, int> cnt;
+    for (int y = z.y0; y < z.y1; y++)
+      for (int x = z.x0; x < z.x1; x++) { cnt[overlay_[size_t(y) * 320 + x]]++; zoneOf[y * 320 + x] = uint8_t(k + 1); }
+    int best = -1;
+    for (auto &[c, n] : cnt) if (n > best) { best = n; z.bg = c; }
+  }
+  // emplacements des sprites remplacés par une image HD : rien de l'image d'origine n'y est remis
+  static uint8_t hdSpr[320 * 200];
+  std::memset(hdSpr, 0, sizeof hdSpr);
+  for (const SpriteDraw &e : visible_)
+    if (assets.sprite(e.id))
+      for (int y = std::max(0, e.y); y < std::min(200, e.y + e.h); y++)
+        for (int x = std::max(0, e.x); x < std::min(320, e.x + e.w); x++) hdSpr[y * 320 + x] = 1;
+  // fissure du cadre (dégâts) : pixels changés dans la bande du haut, hors sprites HD autres que la barre
+  // (23-28) ; redessinée sur le tube du cockpit HD par drawCrack, après les sprites
+  crack_.assign(64000, 0);
+  if (ref)
+    for (int v = 0; v < CRACK_ROWS; v++)
+      for (int u = 0; u < 320; u++) {
+        const size_t i = size_t(v) * 320 + u;
+        if (overlay_[i] && ckIdx_[i] != ckRef_[i]) crack_[i] = 1;
+      }
+  for (const SpriteDraw &e : visible_)
+    if (assets.sprite(e.id) && (e.id < 23 || e.id > 28))
+      for (int y = std::max(0, e.y); y < std::min(CRACK_ROWS, e.y + e.h); y++)
+        for (int x = std::max(0, e.x); x < std::min(320, e.x + e.w); x++) crack_[size_t(y) * 320 + x] = 0;
+  for (int y = 0; y < H; y++) {
+    const int v = mapY_[y];
+    const uint32_t *src = &overlay_[size_t(v) * 320];
+    const uint8_t *rf = ref ? &ckRef_[size_t(v) * 320] : nullptr;
+    const uint8_t *ci = &ckIdx_[size_t(v) * 320];
+    const uint32_t *hd = &ckScaled_[size_t(y) * W];
+    uint32_t *o = out + size_t(y) * W;
+    for (int x = 0; x < W; x++) {
+      const int u = mapX_[x];
+      if (u < 0) continue;
+      const uint32_t c = src[u], h = hd[x];
+      const int zk = zoneOf[v * 320 + u];
+      bool lowres;
+      if (zk) lowres = c && c != zones[zk - 1].bg && std::abs(luma(c) - luma(zones[zk - 1].bg)) > 30;   // chiffres, barre
+      else lowres = c && !hdSpr[v * 320 + u] && v >= CRACK_ROWS && (ref ? ci[u] != rf[u] : (h >> 24) == 0)   // changé depuis le début (ou hors de l'image HD)
+                    && !(c == skyC && v < 150);   // fond bleu des messages (couleur du ciel d'origine) : le ciel HD reste visible
+      if (h >> 24) {
+        const uint32_t a = h >> 24, d = o[x];
+        if (a >= 255) o[x] = h;
+        else {
+          auto mix = [&](int sh) { return ((((h >> sh) & 255) * a + ((d >> sh) & 255) * (255 - a)) / 255) << sh; };
+          o[x] = 0xff000000u | mix(16) | mix(8) | mix(0);
+        }
+      }
+      if (lowres) o[x] = c;
+    }
+  }
+}
+
+bool HdView::renderSpectator(const Machine &m, int track, int follow, uint32_t *out, int W, int H) {
+  if (ghosts.empty() || tracks_.empty()) return false;
+  if (track < 0) track = snaps_.empty() ? 0 : snaps_.back().track;   // circuit de la dernière course
+  follow = std::clamp(follow, 0, int(ghosts.size()) - 1);
+  const Ghost &g = ghosts[size_t(follow)];
+  if (!g.pose.valid) return false;
+  const double HS = params.hScale, gy = GROUND_RAW * HS;
+  const double dtF = specFrame_ ? std::clamp(double(frame_ - specFrame_), 0.0, 10.0) : 0;   // trames émulées depuis l'image précédente
+  specFrame_ = frame_;
+  specT_ += dtF / 50.0;
+  // voiture suivie : posée sur la route (même correction que pour l'affichage des fantômes)
+  double ty = g.pose.yRaw;
+  {
+    const int keepHint = hint_;
+    double sv;
+    if (surfaceRaw(tracks_[track & 7], g.pose.x, g.pose.z, ty, sv) && sv > ty && sv - ty < 260) ty = sv;
+    hint_ = keepHint;
+  }
+  const Vec3 target{g.pose.x, ty * HS + 40, g.pose.z};
+  // tribune la plus proche de la voiture ; on n'en change que si une autre est nettement plus proche
+  // (et au plus toutes les 3 s) : pas de va-et-vient de la caméra
+  auto it = scenery_.find(track & 7);
+  if (it == scenery_.end()) it = scenery_.emplace(track & 7, buildScenery(tracks_[track & 7], params.density)).first;
+  const std::vector<SceneObj> &sc = it->second;
+  auto standDist = [&](int i) { return std::hypot(sc[size_t(i)].x - target.x, sc[size_t(i)].z - target.z); };
+  int best = -1;
+  for (int i = 0; i < int(sc.size()); i++)
+    if (sc[size_t(i)].kind == SCENE_STAND && (best < 0 || standDist(i) < standDist(best))) best = i;
+  bool jump = false;
+  if (best >= 0 && (specStand_ < 0 || specStand_ >= int(sc.size()) || sc[size_t(specStand_)].kind != SCENE_STAND ||
+                    (best != specStand_ && specT_ > 3 && standDist(best) < 0.7 * standDist(specStand_)))) {
+    jump = specStand_ != best;
+    specStand_ = best; specT_ = 0;
+  }
+  Camera c;
+  if (specStand_ >= 0 && specStand_ < int(sc.size()) && params.scenery) {
+    // place en haut des gradins, en face de la voiture le long de la tribune (regard au-dessus du public) ;
+    // les routes sont souvent surélevées : quand la voiture roule plus haut que les gradins, la caméra
+    // monte sur le devant du toit de la tribune pour voir la piste par-dessus ses murs
+    const SceneObj &o = sc[size_t(specStand_)];
+    const double ax = o.fz, az = -o.fx, hl = o.len / 2;
+    const double a = std::clamp((target.x - o.x) * ax + (target.z - o.z) * az, -hl + 80, hl - 80);
+    const double seatY = gy + 40 + 6 * 55 + 70;                         // dernier rang, assis
+    const double wantH = std::clamp(target.y + 380, seatY, gy + 2600);   // au-dessus de la route de la voiture
+    if (jump || specH_ <= 0) specH_ = wantH;
+    else specH_ += (wantH - specH_) * (1 - std::pow(0.96, dtF));
+    const double up = std::clamp((specH_ - seatY) / 200, 0.0, 1.0);    // 0 : dans les gradins, 1 : sur le toit
+    const double depth = 6 * 95 + 40 + (-70 - (6 * 95 + 40)) * up;
+    c.pos = {o.x + ax * a - o.fx * depth, specH_, o.z + az * a - o.fz * depth};
+  } else {
+    // pas de tribune (décor coupé) : caméra de bord de piste, en hauteur, à côté de la voiture
+    c.pos = {target.x + g.pose.right.x * 2600 - g.pose.fwd.x * 1200, target.y + 900, target.z + g.pose.right.z * 2600 - g.pose.fwd.z * 1200};
+    jump = true;
+  }
+  const double dx = target.x - c.pos.x, dy = target.y - c.pos.y, dz = target.z - c.pos.z, dh = std::hypot(dx, dz);
+  const double yaw = std::atan2(dx, dz), pitch = std::atan2(dy, std::max(1.0, dh));
+  // zoom : la voiture garde une taille lisible quand elle s'éloigne (comme une caméra de télévision)
+  const double zoom = std::clamp(dh / 1100.0, 1.0, 6.0);
+  if (jump || specZoom_ <= 0) { specYaw_ = yaw; specPitch_ = pitch; specZoom_ = zoom; }
+  else {   // visée lissée (la caméra suit la voiture sans à-coups)
+    const double k = 1 - std::pow(0.82, dtF);
+    specYaw_ += std::remainder(yaw - specYaw_, 2 * PI) * k;
+    specPitch_ += (pitch - specPitch_) * k;
+    specZoom_ += (zoom - specZoom_) * (1 - std::pow(0.95, dtF));
+  }
+  c.yaw = specYaw_; c.pitch = specPitch_; c.roll = 0;
+  const double s = H / 200.0;
+  c.focal = params.focal * s * specZoom_; c.focalY = c.focal * params.aspect; c.cx = W / 2.0; c.cy = H / 2.0; c.nearZ = 2;
+  useRacePal_ = true;
+  {   // particules (chocs des autres voitures) : avancées comme en course
+    stepParticles(dtF);
+  }
+  drawWorld(c, track, out, W, H, m, nullptr);
+  useRacePal_ = false;
+  return true;
 }
 
 void HdView::render(const Machine &m, double t, uint32_t *out, int W, int H) {
   const double s = H / 200.0, ox = (W - 320 * s) / 2;
-  if (!racing()) {
+  // fin de course (épave, victoire) : le jeu ne calcule plus la course mais montre encore le
+  // cockpit (messages, attente avant le menu) ; on reste en HD, scène figée, tant qu'il est là
+  bool held = false;
+  if (!racing() && !snaps_.empty() && ckRef_.size() == 64000) {
+    static uint32_t st[320 * 200];
+    m.screenARGB(st);
+    uint32_t pal[16];
+    for (int i = 0; i < 16; i++) pal[i] = m.paletteARGB(i);
+    int same = 0, tot = 0;
+    for (int y = 160; y < 200; y += 2)
+      for (int x = 0; x < 320; x += 3) {
+        const uint8_t r = ckRef_[size_t(y) * 320 + x];
+        if (r == 255) continue;
+        tot++; same += st[y * 320 + x] == pal[r];
+      }
+    held = tot > 200 && same * 100 >= tot * 85;
+  }
+  held_ = held;
+  if (!racing() && !held) {
+    ckRefFrames_ = 0; ckRef_.clear();   // cockpit HD : nouvelle référence à la prochaine course
     // hors course : écran d'origine agrandi, centré
     static uint32_t st[320 * 200];
     m.screenARGB(st);
@@ -477,11 +1293,66 @@ void HdView::render(const Machine &m, double t, uint32_t *out, int W, int H) {
     }
     return;
   }
+  if (racing())   // palette de la course, gardée pour la vue spectateur (le jeu revient ensuite à ses menus)
+    for (int i = 0; i < 16; i++) { racePal_[i] = m.paletteARGB(i); racePalOk_ = true; }
   double T = playTime(t);
   wind_ += (windTarget_ - wind_) * 0.08;   // lissé (affichage à 60 i/s)
   Pose p = poseAt(T);
+  if (viewSide != 0) { p.x += std::cos(p.yaw) * viewSide; p.z -= std::sin(p.yaw) * viewSide; }   // vue décalée sur le côté
   int track = snaps_.back().track;
   OppPose opp = opponentAt(T);
+  {   // suspensions de l'adversaire : les roues ne passent jamais sous la route (ni sous le sol hors
+      // piste) ; ce qui dépasse, et le choc de la réception, enfonce la caisse qui remonte ensuite
+    const double dt = oppSquatT_ < 0 ? 0 : std::clamp(T - oppSquatT_, 0.0, 4.0);
+    oppSquatT_ = T;
+    oppSquat_ *= std::pow(0.72, dt);
+    if (opp.valid) {
+      const int keepHint = hint_;
+      double s, floor = GROUND_RAW;
+      if (surfaceRaw(tracks_[track & 7], opp.x, opp.z, opp.yRaw, s) && s - opp.yRaw < 260) floor = s;
+      hint_ = keepHint;
+      const double pen = floor - opp.yRaw;
+      if (pen > 0) {
+        opp.yRaw = floor;
+        oppSquat_ = std::max(oppSquat_, std::min(14.0, std::max(0.0, pen - 10) * params.hScale / 0.55 * 0.6));
+      }
+      for (const Snap &sn : snaps_)   // réception d'un saut : compression selon la violence du choc
+        if (sn.oppImpact > 0 && sn.t <= T && T - sn.t < 2) oppSquat_ = std::max(oppSquat_, std::min(14.0, sn.oppImpact * 0.4));
+      opp.squat = oppSquat_;
+    }
+  }
+  {   // particules (étincelles, fumée) : avancées selon le temps écoulé, en trames
+    double dt = partT_ < 0 ? 0 : std::clamp(T - partT_, 0.0, 4.0);
+    partT_ = T;
+    stepParticles(dt);
+    for (const Snap &sn : snaps_)   // l'adversaire retombe brutalement : étincelles quand on le voit toucher la route
+      if (sn.oppImpact > 0 && sn.t <= T && sn.t > oppImpactT_) {
+        oppImpactT_ = sn.t;
+        if (params.particles && opp.valid && T - sn.t < 30)
+          spawnImpact({opp.x, opp.yRaw * params.hScale + 8, opp.z}, sn.oppImpact, opp.fwd);
+      }
+    if (ownImpact_ > 0) {   // choc de notre voiture : gerbe devant le capot
+      const double sy = std::sin(p.yaw), cy = std::cos(p.yaw);
+      if (params.particles)
+        spawnImpact({p.x + sy * 120, p.y * params.hScale / 0.5 + 6, p.z + cy * 120}, ownImpact_, {sy, 0, cy});
+      ownImpact_ = 0;
+    }
+  }
+  {   // roues de l'adversaire : distance parcourue depuis l'image précédente, dans le sens de la marche
+    double step = 0;
+    if (opp.valid && oppPrev_.valid) {
+      double dx = opp.x - oppPrev_.x, dy = (opp.yRaw - oppPrev_.yRaw) * params.hScale, dz = opp.z - oppPrev_.z;
+      step = dx * opp.fwd.x + dy * opp.fwd.y + dz * opp.fwd.z;
+      if (std::fabs(step) > 400) step = 0;   // saut (grue, nouveau départ)
+    }
+    // rotation réelle (distance / rayon) affichée jusqu'à 0,2 rad par image : au-delà, les sculptures
+    // défileraient à l'envers (effet stroboscopique) ; la vitesse en plus se traduit en flou
+    const double CAP = 0.2, dphi = step / (25 * 0.55);
+    oppRollStep_ = std::clamp(dphi, -CAP, CAP);
+    oppRollContrast_ = std::clamp(1 - (std::fabs(dphi) - CAP) / 4, 0.6, 1.0);
+    oppRoll_ = std::fmod(oppRoll_ + oppRollStep_, 2 * PI * 1000);
+    oppPrev_ = opp;
+  }
   const_cast<Machine &>(m).hideOpponentPixels(opp.valid);
   renderScene(p, track, out, W, H, params.focal * s, ox + params.cx * s, params.cy * s, m, &opp);
   if (!params.cockpit) return;
@@ -502,21 +1373,207 @@ void HdView::render(const Machine &m, double t, uint32_t *out, int W, int H) {
     }
     for (int y = 0; y < H; y++) mapY_[y] = std::min(199, int((y + 0.5) / s));
   }
-  for (int y = 0; y < H; y++) {
-    const uint32_t *src = &overlay_[mapY_[y] * 320];
-    uint32_t *o = out + size_t(y) * W;
-    for (int x = 0; x < W; x++) {
-      int u = mapX_[x];
-      if (u >= 0 && src[u]) o[x] = src[u];
+  {   // grue : chaînes (19-22) vues il y a moins d'une seconde (elles ne sont pas dans toutes les images)
+    // bouts de chaîne restés au-dessus du moteur (y >= 120) sans le reste de la chaîne : la grue est
+    // partie (course à plusieurs : le jeu les laisse dessinés) ; ni dessinés, ni comptés pour la grue
+    bool upper = false;
+    for (const SpriteDraw &e : visible_) upper |= e.id >= 19 && e.id <= 22 && e.y < 120;
+    if (!upper)
+      visible_.erase(std::remove_if(visible_.begin(), visible_.end(), [](const SpriteDraw &e) { return e.id >= 19 && e.id <= 22; }), visible_.end());
+    bool chains = false;
+    for (const SpriteDraw &e : visible_) chains |= e.id >= 19 && e.id <= 22;
+    craneHold_ = chains ? 60 : std::max(0, craneHold_ - 1);
+  }
+  if (std::getenv("SCR_SPRLOG")) {   // test : sprites visibles (quand la liste change)
+    static std::string last; std::string l;
+    for (const SpriteDraw &e : visible_) l += std::to_string(e.id) + "@" + std::to_string(e.x) + "," + std::to_string(e.y) + " ";
+    if (l != last) { last = l; std::fprintf(stderr, "sprites t=%.0f : %s\n", T, l.c_str()); }
+  }
+  // ordre des sprites : celui du jeu, sauf priorité des images ; plan < 0 (roues) sous le cockpit
+  std::stable_sort(visible_.begin(), visible_.end(), [&](const SpriteDraw &a, const SpriteDraw &b) { return spriteLayer(a.id) < spriteLayer(b.id); });
+  if (!assets.cockpit.px.empty()) {   // fond du cockpit (cockpit_fond.png) : sous les roues, cache la route
+    scaleCockpitImages(W, H, s, ox);
+    blendImage(ckBack_, out, size_t(W) * H);
+  }
+  if (!assets.sprites().empty()) drawSprites(m, out, W, H, s, ox, T, -1000, -1, false);
+  if (!assets.cockpit.px.empty()) drawCockpitHd(m, out, W, H, s, ox);
+  else
+    for (int y = 0; y < H; y++) {
+      const uint32_t *src = &overlay_[mapY_[y] * 320];
+      uint32_t *o = out + size_t(y) * W;
+      for (int x = 0; x < W; x++) {
+        int u = mapX_[x];
+        if (u >= 0 && src[u]) o[x] = src[u];
+      }
+    }
+  // sprites remplacés par les images du dossier hd/ : plan >= 0 au-dessus du cockpit
+  if (assets.sprites().empty() && !params.builtinFlames) { drawCockpitFront(out, W, H); return; }
+  drawSprites(m, out, W, H, s, ox, T, 0, 1000, true);
+  drawPanelText(out, W, H);
+  if (!assets.cockpit.px.empty()) drawCrack(out, W, H, s);
+}
+
+// fissure du cadre : la bande du haut de l'écran d'origine (barre de 0 à 16) est replacée sur le tube
+// du cockpit HD, colonne par colonne (haut et bas du tube relevés dans cockpit.png)
+void HdView::drawCrack(uint32_t *out, int W, int H, double s) {
+  const HdImage &ck = assets.cockpit;
+  if (crack_.size() != 64000 || ck.px.empty()) return;
+  bool any = false;
+  for (int i = 0; i < CRACK_ROWS * 320 && !any; i++) any = crack_[size_t(i)];
+  if (!any) return;
+  if (tubeTop_.size() != 320) {   // tube du haut : rangées opaques sous le haut de l'image, par colonne d'origine
+    tubeTop_.assign(320, -1); tubeBot_.assign(320, -1);
+    for (int u = 0; u < 320; u++) {
+      const int cx = std::min(ck.w - 1, int((u + 0.5) * ck.w / 320));
+      const int lim = std::min(ck.h, int(30.0 * ck.h / 200));
+      int a = -1, b = -1;
+      for (int y = 0; y < lim; y++) {
+        const bool op = (ck.px[size_t(y) * ck.w + cx] >> 24) > 128;
+        if (op && a < 0) a = y;
+        if (!op && a >= 0) { b = y; break; }
+      }
+      if (a >= 0) { tubeTop_[size_t(u)] = a * 200.0 / ck.h; tubeBot_[size_t(u)] = (b < 0 ? lim : b) * 200.0 / ck.h; }
     }
   }
-  // sprites remplacés par les images du dossier hd/, dans l'ordre où le jeu les a dessinés
-  if (assets.sprites().empty() && !params.builtinFlames) return;
+  // tracé de la fissure : pixels sombres du jeu (le trait), colonne par colonne
+  auto lum = [](uint32_t c) { return int((c >> 16) & 255) * 77 + int((c >> 8) & 255) * 150 + int(c & 255) * 29 >> 8; };
+  uint64_t h = 1469598103934665603ull ^ uint64_t(W) * 31 ^ uint64_t(H) * 131;
+  for (int i = 0; i < CRACK_ROWS * 320; i++)
+    if (crack_[size_t(i)] && lum(overlay_[size_t(i)]) < 80) h = (h ^ uint64_t(i + 1)) * 1099511628211ull;
+  if (h != crackHash_ || crackW_ != W || crackH_ != H) {
+    crackHash_ = h; crackW_ = W; crackH_ = H;
+    crackY1_ = std::min(H, int(32 * s));
+    crackD_.assign(size_t(W) * crackY1_, 1e9f); crackL_.assign(size_t(W) * crackY1_, 1e9f);
+    const double ox = (W - 320 * s) / 2, xa = 32, xb = 288, la = ox + xa * s, lb = ox + xb * s;
+    auto fx = [&](double u) { return u < xa ? u / xa * la : u >= xb ? lb + (u - xb) / (320 - xb) * (W - lb) : la + (u - xa) * s; };
+    // point (colonne u, rangée v de la barre d'origine) -> pixel HD posé sur le tube du cockpit HD
+    auto P = [&](double u, double v, double &X, double &Y) {
+      const int c = std::clamp(int(u), 0, 319);
+      const double t0 = tubeTop_[size_t(c)], t1 = tubeBot_[size_t(c)];
+      X = fx(u); Y = (t0 + std::clamp(v / CRACK_ROWS, 0.0, 1.0) * (t1 - t0)) * s;
+    };
+    std::vector<std::vector<std::pair<double, double>>> lines;   // tracés en pixels HD
+    {   // milieu du trait par colonne, lissé (pas d'escalier de pixels), coupé aux interruptions
+      std::vector<double> mid(320, -1);
+      for (int u = 0; u < 320; u++) {
+        if (tubeTop_[size_t(u)] < 0) continue;
+        double sv = 0; int n = 0;
+        for (int v = 0; v < CRACK_ROWS; v++)
+          if (crack_[size_t(v) * 320 + u] && lum(overlay_[size_t(v) * 320 + u]) < 80) { sv += v + 0.5; n++; }
+        if (n) mid[size_t(u)] = sv / n;
+      }
+      std::vector<std::pair<double, double>> cur;
+      for (int u = 0; u <= 320; u++) {
+        const bool have = u < 320 && mid[size_t(u)] >= 0;
+        if (!have) {
+          // trou d'une colonne : on continue le tracé ; plus long : nouveau tracé
+          if (u < 319 && mid[size_t(u + 1)] >= 0 && !cur.empty()) continue;
+          if (cur.size() > 1) lines.push_back(cur);
+          cur.clear();
+          continue;
+        }
+        double sv = 0, sw = 0;
+        for (int d = -3; d <= 3; d++) {
+          const int c = u + d;
+          if (c < 0 || c >= 320 || mid[size_t(c)] < 0) continue;
+          const double w = 4 - std::abs(d);
+          sv += mid[size_t(c)] * w; sw += w;
+        }
+        double X, Y;
+        P(u + 0.5, sv / sw, X, Y);
+        if (cur.empty()) { double X0, Y0; P(u, sv / sw, X0, Y0); cur.push_back({X0, Y0}); }
+        cur.push_back({X, Y});
+      }
+    }
+    // tracé irrégulier : segments recoupés tous les ~3 px et décalés (bruit à deux échelles)
+    auto hash = [](uint32_t x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return (x >> 8) / double(1 << 24) - 0.5; };
+    const double k = s / 5.4;   // épaisseur à l'échelle de l'écran
+    uint32_t seed = 1;
+    auto stamp = [&](std::vector<float> &D, double ax, double ay, double bx, double by, double R) {
+      const int x0 = std::max(0, int(std::min(ax, bx) - R)), x1 = std::min(W - 1, int(std::max(ax, bx) + R) + 1);
+      const int y0 = std::max(0, int(std::min(ay, by) - R)), y1 = std::min(crackY1_ - 1, int(std::max(ay, by) + R) + 1);
+      const double dx = bx - ax, dy = by - ay, l2 = std::max(1e-9, dx * dx + dy * dy);
+      for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++) {
+          const double px = x + 0.5 - ax, py = y + 0.5 - ay, t = std::clamp((px * dx + py * dy) / l2, 0.0, 1.0);
+          const float d = float(std::hypot(px - t * dx, py - t * dy));
+          float &o = D[size_t(y) * W + x];
+          if (d < o) o = d;
+        }
+    };
+    for (auto &ln : lines) {
+      std::vector<std::pair<double, double>> pts;
+      for (size_t i = 0; i + 1 < ln.size(); i++) {
+        const double ax = ln[i].first, ay = ln[i].second, bx = ln[i + 1].first, by = ln[i + 1].second;
+        const int nsub = std::max(1, int(std::hypot(bx - ax, by - ay) / (3 * k)));
+        for (int j = 0; j < nsub; j++) pts.push_back({ax + (bx - ax) * j / nsub, ay + (by - ay) * j / nsub});
+      }
+      pts.push_back(ln.back());
+      for (size_t i = 1; i + 1 < pts.size(); i++) {
+        const double n1 = hash(seed++) * 3.0 * k, n2 = hash(uint32_t(i / 3) * 977u + 7) * 3.2 * k;
+        pts[i].second += n1 + n2; pts[i].first += hash(seed++) * 0.8 * k;
+      }
+      for (size_t i = 0; i + 1 < pts.size(); i++) {
+        stamp(crackD_, pts[i].first, pts[i].second, pts[i + 1].first, pts[i + 1].second, 7 * k);
+        stamp(crackL_, pts[i].first, pts[i].second + 1.7 * k, pts[i + 1].first, pts[i + 1].second + 1.7 * k, 2 * k);
+        // petites ramifications aux cassures du tracé
+        if (hash(seed++) > 0.36) {
+          const double ang = (hash(seed++) > 0 ? 1 : -1) * (0.6 + hash(seed++) * 0.6) + 1.5708, len = (3 + (hash(seed++) + 0.5) * 6) * k;
+          stamp(crackD_, pts[i].first, pts[i].second, pts[i].first + std::cos(ang) * len * 0.5, pts[i].second + std::sin(ang) * len, 7 * k);
+        }
+      }
+    }
+  }
+  // rendu : creux sombre autour (enfoncement), fente noire nette au centre, liseré clair dessous
+  // (peinture écaillée) ; seulement sur le tube du cockpit HD
+  const double k = s / 5.4;
+  for (int y = 0; y < crackY1_; y++) {
+    uint32_t *o = out + size_t(y) * W;
+    const float *D = &crackD_[size_t(y) * W], *Lh = &crackL_[size_t(y) * W];
+    for (int x = 0; x < W; x++) {
+      const double d = D[x] / k, dl = Lh[x] / k;
+      if (d > 7 && dl > 2) continue;
+      const int u = mapX_[x];
+      if (u < 0 || tubeTop_[size_t(u)] < 0) continue;
+      const double vo = (y + 0.5) / s;
+      if (vo < tubeTop_[size_t(u)] || vo >= tubeBot_[size_t(u)]) continue;
+      double r = (o[x] >> 16) & 255, g = (o[x] >> 8) & 255, b = o[x] & 255;
+      const double shade = 1 - 0.55 * std::exp(-(d / 4.0) * (d / 4.0));     // creux
+      r *= shade; g *= shade; b *= shade;
+      const double hl = std::clamp(1.1 - dl / 0.9, 0.0, 1.0) * std::clamp((d - 0.9) / 0.6, 0.0, 1.0) * 0.55;   // liseré clair
+      r += (235 - r) * hl; g += (200 - g) * hl; b += (195 - b) * hl;
+      const double core = std::clamp(1.3 - d / 1.0, 0.0, 1.0);          // fente
+      r += (18 - r) * core; g += (6 - g) * core; b += (6 - b) * core;
+      o[x] = 0xff000000u | uint32_t(r) << 16 | uint32_t(g) << 8 | uint32_t(b);
+    }
+  }
+}
+
+
+// sprites remplacés par les images du dossier hd/ (ordre du jeu, sauf priorité des images), de plan
+// lo à hi ; front : la partie avant du cockpit passe avant le premier sprite de plan >= 1
+void HdView::drawSprites(const Machine &m, uint32_t *out, int W, int H, double s, double ox, double T, int lo, int hi, bool front) {
   const double xa = 32, xb = 288, la = ox + xa * s, lb = ox + xb * s;
   auto fx = [&](double u) { return u < xa ? u / xa * la : u >= xb ? lb + (u - xb) / (320 - xb) * (W - lb) : la + (u - xa) * s; };
+  bool frontDone = !front;
+  const bool crane = craneHold_ > 0;   // voiture soulevée par la grue : les roues ne tournent pas
   for (const SpriteDraw &e : visible_) {
-    const HdSprite *spr = spriteFor(e.id, m);
+    const int lay = spriteLayer(e.id);
+    if (lay < lo || lay > hi) continue;
+    if (!frontDone && lay >= 1) { drawCockpitFront(out, W, H); frontDone = true; }   // après les roues, avant le moteur
     bool flameId = std::find(std::begin(FLAME_IDS), std::end(FLAME_IDS), e.id) != std::end(FLAME_IDS);
+    // flammes : images du dossier hd/ seulement si demandé (d'anciennes versions y laissaient les leurs)
+    int id = e.id;
+    if (id <= 5) {   // roues : pendant la grue, dernière image avant la grue
+      int &fz = wheelFrozen_[id <= 2 ? 0 : 1];
+      if (crane) { if (fz < 0) fz = id; id = fz; }
+      else fz = id;
+    } else if (id >= 37 && id <= 48 && crane) {
+      // morceaux de pneu (rebond des roues) : le jeu les fait apparaître et disparaître pendant la
+      // grue ; roues entières, immobiles
+      continue;
+    }
+    const HdSprite *spr = flameId && !params.flameImages ? nullptr : spriteFor(id, m);
     if (!spr && flameId && params.builtinFlames) {
       // image d'animation choisie par le jeu (6/7/49 à gauche, 8/9/50 à droite), à sa place exacte
       drawFlame(e.id, fx(e.x), e.y * s, s, m, out, W, H);
@@ -540,6 +1597,43 @@ void HdView::render(const Machine &m, double t, uint32_t *out, int W, int H) {
     HdAssets::draw(*spr, T / 50.0 * (1 + 0.8 * wk), cx - w2 + spr->dx * s, top + spr->dy * s, cx + w2 + spr->dx * s,
                    ny0 + h + spr->dy * s, out, W, H, baked ? 0 : side * 0.55 * wk, wk);
   }
+  if (!frontDone) drawCockpitFront(out, W, H);
 }
+
+// plan d'un sprite remplacé : réglage de l'image (layer), sinon flammes 2, le reste 0
+int HdView::spriteLayer(int id) const {
+  if (const HdSprite *p = assets.sprite(id)) return p->layer;
+  return std::find(std::begin(FLAME_IDS), std::end(FLAME_IDS), id) != std::end(FLAME_IDS) ? 2 : 0;
+}
+
+// partie avant du cockpit (hd/cockpit_avant.png), mélangée par-dessus l'image
+// panneau des messages (sprite 51 : PRESS FIRE, ...) remplacé par une image HD : le texte que le jeu
+// écrit dessus (pixels nettement plus sombres ou plus clairs que le fond du panneau) est reposé
+// par-dessus l'image
+void HdView::drawPanelText(uint32_t *out, int W, int H) {
+  if (!assets.sprite(51) || overlay_.size() != 64000) return;
+  auto luma = [](uint32_t c) { return int((c >> 16) & 255) * 77 + int((c >> 8) & 255) * 150 + int(c & 255) * 29 >> 8; };
+  for (const SpriteDraw &e : visible_) {
+    if (e.id != 51) continue;
+    const int x0 = std::max(0, e.x + 4), y0 = std::max(0, e.y + 4), x1 = std::min(320, e.x + e.w - 4), y1 = std::min(200, e.y + e.h - 4);
+    if (x1 <= x0 || y1 <= y0) continue;
+    std::map<uint32_t, int> cnt;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) cnt[overlay_[size_t(y) * 320 + x]]++;
+    uint32_t bg = 0; int best = -1;
+    for (auto &[c, n] : cnt) if (n > best) { best = n; bg = c; }
+    for (int y = 0; y < H; y++) {
+      const int v = mapY_[y];
+      if (v < y0 || v >= y1) continue;
+      for (int x = 0; x < W; x++) {
+        const int u = mapX_[x];
+        if (u < x0 || u >= x1) continue;
+        const uint32_t c = overlay_[size_t(v) * 320 + u];
+        if (c && c != bg && (bg == 0 || std::abs(luma(c) - luma(bg)) > 30)) out[size_t(y) * W + x] = c;
+      }
+    }
+  }
+}
+
+void HdView::drawCockpitFront(uint32_t *out, int W, int H) { blendImage(ckFront_, out, size_t(W) * H); }
 
 }  // namespace scr

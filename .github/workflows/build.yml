@@ -1,0 +1,68 @@
+# Stunt Car Racer : compilation des zips Windows (jeu + serveur relais) par native/build_release.sh,
+# signature des programmes par SignPath (dès que le projet y est configuré) et release GitHub
+# « scr-vNN » (numéro de version de native/src/main.cpp, notes : release/NOTES.md).
+name: Stunt Car Racer build
+
+on:
+  push:
+    paths: ["native/**", "release/NOTES.md", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilation (llvm-mingw, SDL2 statique)
+        run: |
+          WORK="$RUNNER_TEMP/work" OUT="$PWD/dist" native/build_release.sh
+          cat dist/version.txt >> "$GITHUB_ENV"
+
+      - name: Zips non signés (pour SignPath)
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: stunt-car-racer-${{ env.VERSION }}
+          path: dist/*.zip
+
+      # Signature des .exe contenus dans les zips (SignPath Foundation, gratuit pour l'open source).
+      # À configurer dans Settings > Secrets and variables > Actions du dépôt :
+      #   secret    SIGNPATH_API_TOKEN
+      #   variables SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG,
+      #             SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+      # Tant que SIGNPATH_ORGANIZATION_ID n'existe pas, la release est publiée sans signature.
+      - name: Signature (SignPath)
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Zips signés à la place des autres
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        run: cp signed/*.zip dist/
+
+      - name: Sommes SHA256
+        run: cd dist && sha256sum *.zip > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: scr-${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Stunt Car Racer ${{ env.VERSION }}
+          body_path: release/NOTES.md
+          make_latest: true
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt

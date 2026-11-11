@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <bitset>
 #include <string>
+#include <deque>
+#include <functional>
 #include <vector>
 
 #include "scrdata.hpp"
@@ -37,10 +39,41 @@ class Machine {
   void startPractice(int track);
 
   void runFrame();                          // une trame vidéo (1/50 s)
+  // une tranche de 1/parts de trame (sliceHook ensuite) ; vrai quand la trame est terminée.
+  // En multijoueur, les tranches sont réparties dans le temps réel : le réseau est lu plus souvent.
+  bool runPart(int parts);
+  int part() const { return part_; }
+
+  // --- port série de l'Atari (câble « Computer Link » entre deux machines) : le jeu y accède par
+  // le BIOS (Bconstat / Bconin / Bconout sur le périphérique 1). serialOut reçoit chaque octet émis ;
+  // serialPush fournit les octets reçus de l'autre machine.
+  std::function<void(uint8_t)> serialOut;
+  std::function<void()> sliceHook;   // appelé quatre fois par trame (lecture du réseau)
+  // choix de « 3. Computer Link » : la poignée de main ne démarre que lorsque linkGate renvoie vrai
+  std::function<bool()> linkGate;
+  bool linkHeld() const { return linkHeld_; }   // jeu en attente à l'entrée du lien
+  // « Computer Link » : nom du pilote n° k (0 = ce joueur, 1 = l'autre) rempli automatiquement
+  // chez le maître à la saisie « NAME? » ; vide = saisie normale au clavier
+  std::function<std::string(int)> linkName;
+  // Échap dans les menus du jeu : revenir au menu précédent ; faux si le menu affiché n'a pas de retour
+  bool menuBack();
+  bool inMenu() const { return menuId_ >= 0; }
+  int menuId() const { return menuId_; }   // menu du jeu affiché ($10 : départ, 0 : saison...), -1 : aucun
+  // menu de départ : dernier choix (0 Single Player League, 1 Multiplayer - Local,
+  // 2 Computer Link - Local LAN, 3 Online Multiplayer ; -1 aucun). 2 et 3 mènent au « Computer Link ».
+  int selectChoice() const { return selectChoice_; }
+  void serialPush(uint8_t v) { serialIn_.push_back(v); }
+  size_t serialPending() const { return serialIn_.size(); }
+  uint64_t serialSent() const { return serialSent_; }
+  uint64_t serialReceived() const { return serialRecv_; }
+  // plusieurs machines dans un même programme : le processeur émulé est global, on sauvegarde et
+  // restaure son état (appelé automatiquement par runFrame et les démarrages)
+  void activate();
   // son : échantillons de la dernière trame (mono, 16 bits) à la fréquence choisie (0 = sans son)
   void setAudioRate(int hz) { audioRate_ = hz; }
   const std::vector<int16_t> &frameAudio() const { return audio_; }
   void setVolume(double v) { volume_ = v; }
+  void setYmMute(int mask) { ym2149_.setMute(mask); }   // voix de la puce son coupées (bits A, B, C)
   void setJoystick(const Joystick &j);
   void setKey(int scancode, bool down);
   void screenARGB(uint32_t *out) const;     // 320×200
@@ -49,6 +82,12 @@ class Machine {
   void setTuning(const Tuning &t);
 
   const Bytes &image() const { return image_; }   // TEXT+DATA du jeu relogés à $10100 (non modifiés)
+  // circuits TNT (Stunt Car Racer « The New Tracks ») à la place des 8 circuits d'origine (ts doit
+  // rester valide) ; nullptr : circuits d'origine. Possible à tout moment hors course (menus) : la
+  // table des circuits, leurs noms et réglages sont remplacés en mémoire, sans relancer le jeu.
+  // trackSet() : nullptr = circuits d'origine
+  void useTrackSet(const struct TrackSet *ts);
+  const struct TrackSet *trackSet() const { return trackSet_; }
   uint32_t ticks() const { return ticks_; }       // nombre d'appels de la physique ($4EEB0)
   // adversaire : dessiné par le jeu depuis le début de la course en cours (absent en entraînement)
   bool opponentInRace() const { return oppDrawnInRace_; }
@@ -91,11 +130,27 @@ class Machine {
   bool spritePixels(int id, std::vector<int> &px, int &w, int &h) const;
   enum : uint8_t { W_OTHER = 0, W_SCENE = 1, W_SPRITE = 2, W_OPPONENT = 3 };
   bool inOpponent_ = false;       // dans la routine de dessin de la voiture adverse ($546DA)
+  bool inCrack_ = false;          // fissure du cadre (dégâts, $52F00-$52FA4) : tracée avec la routine de points du décor
   uint32_t oppReturn_ = 0;
   uint8_t *layers_ = nullptr;     // [RAMSIZE] classe ; [RAMSIZE..2×) valeur du décor ; [2×..3×) écrit par le décor
   static constexpr uint32_t RAMSIZE = 0x100000;
+  const struct TrackSet *trackSet_ = nullptr;
+  std::vector<uint8_t> origTracks_;   // valeurs d'origine remplacées par useTrackSet (pour revenir aux circuits d'origine)
 
  private:
+  std::deque<uint8_t> serialIn_;
+  bool linkHeld_ = false;
+  int menuId_ = -1, autoCancel_ = -1;
+  int selectChoice_ = -1;
+  bool selectMenu_ = false, customText_ = false;
+  uint8_t customStart_ = 0;
+  int part_ = 0;                  // tranche en cours de la trame (runPart)
+  uint64_t partDone_ = 0;
+  bool menuBack_ = false, inName_ = false, nameBack_ = false, nameAuto_ = false;
+  int menuCancelIndex() const;
+  uint64_t serialSent_ = 0, serialRecv_ = 0;
+  std::vector<uint8_t> cpuCtx_;
+  void hleBios(uint32_t sr, uint32_t pc, uint32_t args);
   void setupLowMem();
   void boot();
   void passChecksum();

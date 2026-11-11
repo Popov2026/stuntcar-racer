@@ -17,8 +17,14 @@ void Renderer3D::begin(int W, int H, const Camera &cam, uint32_t background) {
   cyw_ = std::cos(cam.yaw); syw_ = std::sin(cam.yaw);
   cp_ = std::cos(cam.pitch); sp_ = std::sin(cam.pitch);
   cr_ = std::cos(cam.roll); sr_ = std::sin(cam.roll);
-  polys_.clear(); sx_.clear(); sy_.clear();
-  if ((int)zbuf_.size() != W * H) zbuf_.assign(size_t(W) * H, 0.f);
+  polys_.clear(); trans_.clear(); sx_.clear(); sy_.clear(); texs_.clear(); cv_.clear();
+  // matrice de rotation monde -> caméra (colonnes = images des axes du monde)
+  for (int c = 0; c < 3; c++) {
+    Vec3 e{cam.pos.x + (c == 0), cam.pos.y + (c == 1), cam.pos.z + (c == 2)};
+    Vec3 r = toCam(e);
+    M_[0][c] = r.x; M_[1][c] = r.y; M_[2][c] = r.z;
+  }
+  if ((int)zbuf_.size() != W * H) { zbuf_.assign(size_t(W) * H, 0.f); idbuf_.assign(size_t(W) * H, -1); }
 }
 
 Vec3 Renderer3D::toCam(const Vec3 &p) const {
@@ -30,25 +36,397 @@ Vec3 Renderer3D::toCam(const Vec3 &p) const {
 }
 
 void Renderer3D::poly(const Vec3 *pts, int n, uint32_t color) {
-  Vec3 cam[8];
+  Vec3 cam[32];
   for (int i = 0; i < n; i++) cam[i] = toCam(pts[i]);
   addClipped(cam, n, color, -1);
 }
 
+void Renderer3D::polyAlpha(const Vec3 *pts, int n, uint32_t color, float alpha) {
+  Vec3 cam[32];
+  for (int i = 0; i < n; i++) cam[i] = toCam(pts[i]);
+  addClipped(cam, n, color, -1, -1, std::clamp(alpha, 0.f, 1.f));
+}
+
 void Renderer3D::polyFar(const Vec3 *pts, int n, uint32_t color, float depth) {
-  Vec3 cam[8];
+  Vec3 cam[32];
   for (int i = 0; i < n; i++) cam[i] = toCam(pts[i]);
   addClipped(cam, n, color, depth);
 }
 
-void Renderer3D::addClipped(const Vec3 *in, int n, uint32_t color, float fixedDepth) {
+int Renderer3D::addTex(const TexInfo &t, const Vec3 &n, double d) {
+  texs_.push_back({t, n, d});
+  return int(texs_.size()) - 1;
+}
+
+void Renderer3D::polyTex(const Vec3 *pts, int n, uint32_t color, const TexInfo &t) {
+  // plan du polygone dans le monde (normale de Newell)
+  double nx = 0, ny = 0, nz = 0;
+  for (int i = 0; i < n; i++) {
+    const Vec3 &a = pts[i], &b = pts[(i + 1) % n];
+    nx += (a.y - b.y) * (a.z + b.z); ny += (a.z - b.z) * (a.x + b.x); nz += (a.x - b.x) * (a.y + b.y);
+  }
+  double l = std::sqrt(nx * nx + ny * ny + nz * nz);
+  if (l < 1e-12) return;
+  Vec3 N{nx / l, ny / l, nz / l};
+  int ti = addTex(t, N, N.x * pts[0].x + N.y * pts[0].y + N.z * pts[0].z);
+  Vec3 cam[32];
+  for (int i = 0; i < n; i++) cam[i] = toCam(pts[i]);
+  addClipped(cam, n, color, -1, ti);
+}
+
+void Renderer3D::polyFarTex(const Vec3 *pts, int n, uint32_t color, float depth, const TexInfo &t, double h) {
+  int ti = addTex(t, Vec3{0, 1, 0}, h);
+  Vec3 cam[32];
+  for (int i = 0; i < n; i++) cam[i] = toCam(pts[i]);
+  addClipped(cam, n, color, depth, ti);
+}
+
+namespace {
+inline uint32_t hash2(int x, int y, uint32_t seed) {
+  uint32_t h = uint32_t(x) * 374761393u + uint32_t(y) * 668265263u + seed * 2246822519u;
+  h = (h ^ (h >> 13)) * 1274126177u;
+  return h ^ (h >> 16);
+}
+// bruit de valeur lissé, -1..1
+inline double vnoise(double x, double y, uint32_t seed) {
+  double fx = std::floor(x), fy = std::floor(y);
+  int ix = int(fx), iy = int(fy);
+  double tx = x - fx, ty = y - fy;
+  tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+  auto v = [&](int a, int b) { return (hash2(a, b, seed) & 0xffff) / 32767.5 - 1.0; };
+  double a = v(ix, iy) + (v(ix + 1, iy) - v(ix, iy)) * tx, b = v(ix, iy + 1) + (v(ix + 1, iy + 1) - v(ix, iy + 1)) * tx;
+  return a + (b - a) * ty;
+}
+// octave de bruit, atténuée quand elle devient plus fine que le pixel (pas de scintillement au loin)
+inline double oct(double x, double y, double scale, double amp, double foot, uint32_t seed) {
+  double k = std::clamp(1.5 - foot / scale * 2.0, 0.0, 1.0);
+  return k > 0 ? vnoise(x / scale, y / scale, seed) * amp * k : 0.0;
+}
+inline uint32_t mulRGB(uint32_t c, double k) {
+  auto ch = [&](int s) { return uint32_t(std::clamp(int(((c >> s) & 255) * k + 0.5), 0, 255)) << s; };
+  return 0xff000000u | ch(16) | ch(8) | ch(0);
+}
+
+// sin(n·a) et cos(n·a) moyennés sur [a - d, a] (d = angle parcouru pendant l'image) : flou de mouvement exact
+inline double blurSin(double a, double n, double d) {
+  double nd = n * d;
+  return std::fabs(nd) < 1e-4 ? std::sin(n * a) : (std::cos(n * (a - d)) - std::cos(n * a)) / nd;
+}
+inline double blurCos(double a, double n, double d) {
+  double nd = n * d;
+  return std::fabs(nd) < 1e-4 ? std::cos(n * a) : (std::sin(n * a) - std::sin(n * (a - d))) / nd;
+}
+
+// texture de luminance répétable 256×256 précalculée (somme d'octaves de bruit périodique) avec ses
+// niveaux de mip-map : la lecture coûte deux lectures bilinéaires au lieu de plusieurs bruits par pixel
+struct MipTex {
+  static constexpr int N = 256;
+  std::vector<std::vector<float>> lv;   // niveau 0 : N×N, puis N/2…1
+  MipTex(std::initializer_list<std::pair<int, float>> octaves, uint32_t seed) {
+    std::vector<float> a(size_t(N) * N, 0.f);
+    for (auto [period, amp] : octaves) {   // période en texels (divise N : texture répétable)
+      int cells = N / period;
+      for (int y = 0; y < N; y++)
+        for (int x = 0; x < N; x++) {
+          float fx = float(x) / period, fy = float(y) / period;
+          int ix = int(fx), iy = int(fy);
+          float tx = fx - ix, ty = fy - iy;
+          tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+          auto v = [&](int i, int j) { return (hash2(i % cells, j % cells, seed + uint32_t(period)) & 0xffff) / 32767.5f - 1.f; };
+          float p = v(ix, iy) + (v(ix + 1, iy) - v(ix, iy)) * tx, q = v(ix, iy + 1) + (v(ix + 1, iy + 1) - v(ix, iy + 1)) * tx;
+          a[size_t(y) * N + x] += (p + (q - p) * ty) * amp;
+        }
+    }
+    lv.push_back(a);
+    for (int n = N / 2; n >= 1; n /= 2) {
+      const std::vector<float> &b = lv.back();
+      std::vector<float> c(size_t(n) * n);
+      for (int y = 0; y < n; y++)
+        for (int x = 0; x < n; x++)
+          c[size_t(y) * n + x] = 0.25f * (b[size_t(2 * y) * 2 * n + 2 * x] + b[size_t(2 * y) * 2 * n + 2 * x + 1] +
+                                          b[size_t(2 * y + 1) * 2 * n + 2 * x] + b[size_t(2 * y + 1) * 2 * n + 2 * x + 1]);
+      lv.push_back(std::move(c));
+    }
+  }
+  // u, v en texels du niveau 0 ; foot = taille du pixel en texels (choix du niveau)
+  float sample(double u, double v, double foot) const {
+    int l = 0;
+    while (foot > 1.0 && l + 1 < int(lv.size())) { foot *= 0.5; u *= 0.5; v *= 0.5; l++; }
+    const int n = N >> l, m = n - 1;
+    const std::vector<float> &t = lv[size_t(l)];
+    u -= 0.5; v -= 0.5;
+    double fu = std::floor(u), fv = std::floor(v);
+    int x = int(int64_t(fu) & m), y = int(int64_t(fv) & m), x1 = (x + 1) & m, y1 = (y + 1) & m;
+    float tx = float(u - fu), ty = float(v - fv);
+    float a = t[size_t(y) * n + x] + (t[size_t(y) * n + x1] - t[size_t(y) * n + x]) * tx;
+    float b = t[size_t(y1) * n + x] + (t[size_t(y1) * n + x1] - t[size_t(y1) * n + x]) * tx;
+    return a + (b - a) * ty;
+  }
+};
+// sol : grandes plaques (texture « macro », 16 unités par texel) + touffes et grain (0,25 unité par texel)
+const MipTex &groundMacro() { static const MipTex t({{64, 0.16f}, {16, 0.10f}}, 1); return t; }
+const MipTex &groundDetail() { static const MipTex t({{128, 0.08f}, {32, 0.09f}, {8, 0.11f}, {2, 0.09f}}, 2); return t; }
+const MipTex &roadDetail() { static const MipTex t({{256, 0.06f}, {64, 0.05f}, {8, 0.07f}, {2, 0.06f}}, 3); return t; }
+const MipTex &wallDetail() { static const MipTex t({{64, 0.06f}, {8, 0.07f}}, 4); return t; }
+// nuages : grandes masses découpées (octaves du plus grand au plus fin)
+const MipTex &cloudTex() { static const MipTex t({{128, 0.55f}, {64, 0.28f}, {32, 0.15f}, {16, 0.08f}, {8, 0.04f}}, 7); return t; }
+}  // namespace
+
+const std::vector<std::vector<float>> &Renderer3D::mipLevels(int which) {
+  switch (which) {
+    case 0: return groundMacro().lv;
+    case 1: return groundDetail().lv;
+    case 2: return roadDetail().lv;
+    case 3: return wallDetail().lv;
+    default: return cloudTex().lv;
+  }
+}
+
+void Renderer3D::warmTextures() { groundMacro(); groundDetail(); roadDetail(); wallDetail(); cloudTex(); }
+
+void Renderer3D::skyBand(uint32_t *out, int k, int n) {
+  const MipTex &cl = cloudTex();
+  auto chan = [&](int sh) { return float((skyBase_ >> sh) & 255); };
+  const float br = chan(16), bgc = chan(8), bb = chan(0);
+  // horizon pâle et brumeux, zénith plus profond (teinte du ciel de la palette du jeu)
+  const float hr = br + (232 - br) * 0.62f, hg = bgc + (240 - bgc) * 0.62f, hb = bb + (255 - bb) * 0.62f;
+  const float zr = br * 0.62f, zg = bgc * 0.72f, zb = bb * 0.92f;
+  // soleil : assez bas pour être vu depuis le cockpit (≈ 8° au-dessus de l'horizon), fixe dans le monde
+  const double sl = std::sqrt(0.62 * 0.62 + 0.14 * 0.14 + 0.72 * 0.72);
+  const double sx = 0.62 / sl, sy = 0.14 / sl, sz = 0.72 / sl;
+  const double f = cam_.focal, fy = cam_.focalY;
+  const double bx = M_[0][0] / f, by = M_[0][1] / f, bz = M_[0][2] / f;
+  const double HC = 9000, SCALE = 260;   // hauteur des nuages au-dessus de l'œil, unités du monde par texel
+  const double du = skyT_ * 2.2, dv = skyT_ * 0.9;   // dérive lente (texels par seconde)
+  for (int y = k; y < H_; y += n) {
+    uint32_t *o = out + size_t(y) * W_;
+    const float *z = &zbuf_[size_t(y) * W_];
+    const double dy = -(y + 0.5 - cam_.cy) / fy;
+    const double ax = M_[1][0] * dy + M_[2][0], ay = M_[1][1] * dy + M_[2][1], az = M_[1][2] * dy + M_[2][2];
+    // couleur du ciel en x (calculée tous les 8 pixels, interpolée entre : le ciel est doux)
+    auto at = [&](int x, float c[3]) {
+      const double xc = x + 0.5 - cam_.cx;
+      const double rx = ax + bx * xc, ry = ay + by * xc, rz = az + bz * xc;
+      const double il = 1.0 / std::sqrt(rx * rx + ry * ry + rz * rz);
+      const double e = ry * il;
+      float t = float(std::sqrt(std::clamp(e, 0.0, 1.0)));
+      float r = hr + (zr - hr) * t, g = hg + (zg - hg) * t, b = hb + (zb - hb) * t;
+      const double sd = (rx * sx + ry * sy + rz * sz) * il;
+      if (sd > 0.9) {   // halo et disque du soleil
+        const double h = (sd - 0.9) * 10, glow = std::min(1.0, h * h * h * h * 0.35 + (sd > 0.9994 ? 1.0 : sd > 0.999 ? (sd - 0.999) * 2500 : 0.0));
+        r += float((255 - r) * glow); g += float((246 - g) * glow); b += float((222 - b) * glow);
+      }
+      if (e > 0.015) {   // nuages : plan horizontal au-dessus de l'œil
+        const double tt = HC / ry;   // ry > 0
+        const double px = cam_.pos.x + rx * tt, pz = cam_.pos.z + rz * tt;
+        const double foot = 8 * tt * il / f / SCALE / std::max(0.05, e);
+        const float nv = cl.sample(px / SCALE + du, pz / SCALE + dv, foot);
+        float k = std::clamp((nv + 0.02f) / 0.22f, 0.f, 1.f);
+        k = k * k * (3 - 2 * k) * float(std::clamp((e - 0.015) / 0.12, 0.0, 1.0));
+        if (k > 0) {
+          const float dense = std::clamp(nv * 2.2f, 0.f, 1.f), lit = float(std::max(0.0, sd));
+          const float cr = 248 - 52 * dense + 7 * lit, cg = 249 - 48 * dense + 4 * lit, cb = 252 - 38 * dense;
+          r += (cr - r) * k * 0.92f; g += (cg - g) * k * 0.92f; b += (cb - b) * k * 0.92f;
+        }
+      }
+      c[0] = r; c[1] = g; c[2] = b;
+    };
+    float ca[3], cb[3];
+    int have = -1;   // x de la dernière couleur calculée (ca)
+    for (int x0 = 0; x0 < W_; x0 += 8) {
+      const int x1 = std::min(W_, x0 + 8);
+      bool any = false;
+      for (int x = x0; x < x1; x++) any |= z[x] == 0.f;
+      if (!any) continue;
+      if (have != x0) at(x0, ca);
+      at(x0 + 8, cb);
+      for (int x = x0; x < x1; x++) {
+        if (z[x] != 0.f) continue;
+        const float w = (x - x0) * 0.125f;
+        const float r = ca[0] + (cb[0] - ca[0]) * w, g = ca[1] + (cb[1] - ca[1]) * w, b = ca[2] + (cb[2] - ca[2]) * w;
+        o[x] = 0xff000000u | uint32_t(std::clamp(r, 0.f, 255.f)) << 16 | uint32_t(std::clamp(g, 0.f, 255.f)) << 8 | uint32_t(std::clamp(b, 0.f, 255.f));
+      }
+      ca[0] = cb[0]; ca[1] = cb[1]; ca[2] = cb[2]; have = x0 + 8;
+    }
+  }
+}
+
+// couleur d'un pixel texturé : p = point du monde, foot = taille du pixel sur la surface (unités du monde)
+uint32_t Renderer3D::shade(const TexPlane &tp, uint32_t color, const Vec3 &p, double foot) const {
+  const TexInfo &t = tp.t;
+  double k = 1;
+  switch (t.kind) {
+    case TEX_GROUND:   // herbe rase et terre : grandes plaques, touffes, grain
+      k += groundMacro().sample(p.x / 16, p.z / 16, foot / 16) + groundDetail().sample(p.x * 4, p.z * 4, foot * 4);
+      break;
+    case TEX_ROAD: {   // béton : taches, grain fin, traces de pneus sombres dans le sens de la route
+      k += roadDetail().sample(p.x * 4, p.z * 4, foot * 4) + groundMacro().sample(p.z / 8, p.x / 8, foot / 8) * 0.5;
+      double s = (p.x - t.o.x) * t.u.x + (p.y - t.o.y) * t.u.y + (p.z - t.o.z) * t.u.z;
+      double ss = (s - t.s0) / std::max(1e-6, t.s1 - t.s0);
+      double wtr = std::max(0.035, foot / std::max(1e-6, t.s1 - t.s0));   // traces adoucies au loin
+      double tr = std::exp(-std::pow((ss - 0.3) / (wtr + 0.05), 2)) + std::exp(-std::pow((ss - 0.7) / (wtr + 0.05), 2));
+      k -= 0.09 * tr * std::min(1.0, 0.06 / (wtr + 0.025));
+      break;
+    }
+    case TEX_WALL: {   // panneaux : bandes horizontales et grain
+      double sy = p.y / 24.0;
+      double band = std::fabs(sy - std::floor(sy) - 0.5);
+      double kb = std::clamp(1.5 - foot / 24.0 * 3.0, 0.0, 1.0);
+      k += (band > 0.45 ? -0.12 : 0.0) * kb + wallDetail().sample((p.x + p.z) * 2, p.y * 2, foot * 2);
+      break;
+    }
+    case TEX_PAINT: {  // carrosserie peinte : dégradé, reflet, joints de panneaux
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      double s = d.x * t.u.x + d.y * t.u.y + d.z * t.u.z, w = d.x * t.v.x + d.y * t.v.y + d.z * t.v.z;
+      double ws = std::clamp((w - t.w0) / std::max(1e-6, t.w1 - t.w0), 0.0, 1.0);
+      double ss = std::clamp((s - t.s0) / std::max(1e-6, t.s1 - t.s0), 0.0, 1.0);
+      k = 0.86 + 0.24 * ws;                                                  // plus clair vers le haut
+      k += 0.18 * std::exp(-std::pow((ws - 0.72) * 9, 2));                   // reflet
+      double e = std::min(std::min(s - t.s0, t.s1 - s), std::min(w - t.w0, t.w1 - w));
+      double seam = std::max(1.2, foot * 1.5);
+      if (e < seam) k *= 0.62;                                               // joint au bord du panneau
+      else if (std::fabs(ss - 0.5) * (t.s1 - t.s0) < seam * 0.6 && t.s1 - t.s0 > 30) k *= 0.8;   // joint central
+      k += oct(s, w, 3, 0.025, foot, 31);
+      break;
+    }
+    case TEX_ENGINE: {   // compartiment moteur vu du dessus : V8, couvre-culbuteurs, admission, échappements
+      // coordonnées en unités de la voiture (t.r : échelle voiture -> monde) : x en travers, z vers l'avant
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      const double x = (d.x * t.u.x + d.y * t.u.y + d.z * t.u.z) / t.r, z = (d.x * t.v.x + d.y * t.v.y + d.z * t.v.z) / t.r;
+      const double px = foot / t.r, ax = std::fabs(x);
+      if (px > 5) return 0xff4a3434u;   // de loin : teinte moyenne
+      uint32_t c = 0xff26262au;                                   // fond du compartiment
+      double k = 1;
+      if (ax > 31) c = 0xff3c3c42u;                               // longerons
+      for (int i = 0; i < 4; i++) {                               // collecteurs d'échappement (sorties des flammes)
+        const double zc = 128 - 22 * i, rr = std::hypot(ax - 24, z - zc);
+        if (rr < 7) return rr < 3.6 ? 0xff0a0a0au : mulRGB(0xffb8b8bcu, 1.15 - 0.25 * rr / 7);
+        if (ax > 24 && ax < 31 && std::fabs(z - zc) < 3) c = 0xff8c8c90u;   // tube vers le bloc
+      }
+      if (z > 50 && z < 142) {
+        if (ax > 8 && ax < 21) {                                  // couvre-culbuteurs rouges, nervurés
+          c = 0xffb81e1eu;
+          const double rib = std::fabs(std::fmod(z - 50, 9.0) - 4.5);
+          if (rib > 3.6 && px < 2) k = 0.7;
+          if (ax < 9.2 || ax > 19.8) k = 0.6;
+        } else if (ax <= 8) {                                     // admission en aluminium, rainures
+          c = 0xff9c9ca4u;
+          if (std::fabs(std::fmod(x + 40, 4.0) - 2) < 0.5 && px < 1.5) k = 0.82;
+          const double rr = std::hypot(x, z - 98);                // prise d'air : écope noire cerclée de chrome
+          if (rr < 11) return rr < 8.5 ? mulRGB(0xff141416u, 1 + 0.4 * (1 - rr / 8.5)) : 0xffd0d0d4u;
+        }
+      }
+      return mulRGB(c, k * (0.9 + 0.2 * std::clamp((z - 40) / 110, 0.0, 1.0)));
+    }
+    case TEX_GLASS: {   // pare-brise teinté : cadre, reflet en biais, casque du pilote derrière la vitre
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      const double s = d.x * t.u.x + d.y * t.u.y + d.z * t.u.z, w = d.x * t.v.x + d.y * t.v.y + d.z * t.v.z;
+      const double x = s / t.r, z = w / t.r, px = foot / t.r;
+      const double e = std::min(std::min(s - t.s0, t.s1 - s), std::min(w - t.w0, t.w1 - w)) / t.r;
+      if (e < std::max(3.0, px)) return mulRGB(color, 0.8);       // cadre de la couleur de la carrosserie
+      const double zz = (w - t.w0) / std::max(1e-6, t.w1 - t.w0);   // 0 : arrière, 1 : avant
+      uint32_t c = mulRGB(0xff22323eu, 0.85 + 0.35 * zz);
+      const double hz = t.w0 / t.r + 16, rr = std::hypot(x, (z - hz) * 1.3);   // casque, assombri par la vitre
+      if (rr < 11 && px < 4) c = std::fabs(x) < 2.5 ? 0xff7a2020u : (rr < 3 ? 0xff1a1a1au : 0xff8a8a90u);
+      const double refl = std::exp(-std::pow((x * 0.55 + (z - hz) * 0.9 - 6) / 5.0, 2)) + 0.5 * std::exp(-std::pow((x * 0.55 + (z - hz) * 0.9 - 20) / 3.0, 2));
+      const double kb = std::clamp(1.5 - px / 3, 0.3, 1.0);
+      return mulRGB(c, 1 + 0.9 * refl * kb);
+    }
+    case TEX_TIRE: {   // bande de roulement : sculptures transversales
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      double a = std::atan2(d.x * t.v.x + d.y * t.v.y + d.z * t.v.z, d.x * t.u.x + d.y * t.u.y + d.z * t.u.z);
+      // sculptures (14 sur le tour), moyennées sur l'angle parcouru pendant l'image (flou de mouvement) :
+      // nettes à l'arrêt, défilantes à vitesse modérée, uniformes à grande vitesse
+      const double NG = 14;
+      double g = blurSin(a, NG, t.blur);
+      double kb = std::clamp(1.5 - foot / (t.r * 0.35) * 2.0, 0.0, 1.0) * t.contrast;
+      return mulRGB(0xff262626u, 1 + 0.55 * std::clamp(0.5 + 1.2 * g, 0.0, 1.0) * kb);
+    }
+    case TEX_CROWD: {  // public assis : une personne tous les 26 unités (tee-shirt, tête), sur fond de gradin
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      const double s = d.x * t.u.x + d.y * t.u.y + d.z * t.u.z, w = p.y - t.o.y;
+      const double far = std::clamp((foot - 3) / 8, 0.0, 1.0);
+      const uint32_t seat = 0xff5c5c60u;
+      if (far >= 1) return 0xff8a7c74u;   // de loin : teinte moyenne de la foule
+      const double cs = s / 26;
+      const int cell = int(std::floor(cs));
+      const double fx = cs - cell;
+      const uint32_t hh = hash2(cell, int(t.r), 77);
+      if (hh % 9 == 0) return far > 0 ? 0xff7a7270u : seat;   // place vide
+      static const uint32_t SHIRT[8] = {0xffd02828u, 0xff2850c8u, 0xffe8c020u, 0xffeeeeeeu, 0xff30a040u, 0xffe87818u, 0xff8040a0u, 0xff30b0c0u};
+      static const uint32_t SKIN[3] = {0xfff0c8a0u, 0xffc89870u, 0xff8a5a3au};
+      const double bob = ((hh >> 8) % 7) * 0.8;   // hauteurs un peu différentes
+      uint32_t c = seat;
+      if (w < 36 + bob && std::fabs(fx - 0.5) < 0.36) c = SHIRT[(hh >> 4) % 8];
+      else if (w > 39 + bob && w < 53 + bob && std::fabs(fx - 0.5) < 0.19) c = SKIN[(hh >> 12) % 3];
+      if (far > 0) {   // transition vers la teinte moyenne
+        auto mix = [&](int sh) { return uint32_t(((c >> sh) & 255) * (1 - far) + ((0xff8a7c74u >> sh) & 255) * far) << sh; };
+        c = 0xff000000u | mix(16) | mix(8) | mix(0);
+      }
+      return c;
+    }
+    case TEX_BOARD: {  // panneau publicitaire : bordure blanche, fond de couleur, « marque » en lettres blanches
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      const double s = d.x * t.u.x + d.y * t.u.y + d.z * t.u.z, w = d.x * t.v.x + d.y * t.v.y + d.z * t.v.z;
+      const double L = t.s1, H = t.w1, b = H * 0.07;
+      if (s < b || s > L - b || w < b || w > H - b) return 0xfff2f2f2u;
+      const double ty0 = H * 0.27, ty1 = H * 0.73, lh = ty1 - ty0, lw = lh * 0.62, gap = lh * 0.18;
+      const int nl = int((L * 0.8) / (lw + gap));
+      const double sx0 = (L - nl * (lw + gap) + gap) / 2;
+      if (w < ty0 || w > ty1 || s < sx0 || foot > lh * 0.35) return foot > lh * 0.35 && w > ty0 && w < ty1 ? mulRGB(color, 1.25) : color;
+      const double ls = (s - sx0) / (lw + gap);
+      const int li = int(ls);
+      const double lx = (ls - li) * (lw + gap);
+      if (li >= nl || lx > lw) return color;
+      const int px = std::clamp(int(lx / lw * 3), 0, 2), py = std::clamp(int((ty1 - w) / lh * 5), 0, 4);
+      const uint32_t glyph = hash2(li, int(t.r), 5) & 0x7fff;   // lettre 3×5 au hasard (trait vertical garanti)
+      const bool on = (glyph >> (py * 3 + px)) & 1 || px == 0;
+      return on ? 0xfffafafau : color;
+    }
+    case TEX_RIM: {    // flanc du pneu, jante à trois branches, moyeu
+      Vec3 d{p.x - t.o.x, p.y - t.o.y, p.z - t.o.z};
+      double s = d.x * t.u.x + d.y * t.u.y + d.z * t.u.z, w = d.x * t.v.x + d.y * t.v.y + d.z * t.v.z;
+      double r = std::sqrt(s * s + w * w) / t.r;
+      double a = std::atan2(w, s);                       // angle dans le repère de la roue (tourne avec elle)
+      double sharp = t.contrast * std::clamp(1.4 - std::fabs(t.blur) * 3, 0.0, 1.0);   // net à basse vitesse
+      if (r > 0.97) return 0xff181818u;
+      if (r > 0.66) {   // flanc du pneu, avec deux marquages blancs (lettrage) qui tournent avec la roue
+        double base = 1 + 0.25 * (r - 0.66) / 0.31;
+        if (r > 0.74 && r < 0.9) {
+          double am = std::fmod(a + 2 * 3.14159265, 3.14159265);   // deux marquages opposés
+          if (am > 0.35 && am < 1.25) {
+            double letters = std::sin(am * 45) > -0.2 && std::fabs(r - 0.82) < 0.06 ? 1.0 : 0.0;
+            return mulRGB(0xff2a2a2au, base + 3.5 * letters * sharp + 0.6 * letters * (1 - sharp) * 0.3);
+          }
+        }
+        return mulRGB(0xff2a2a2au, base);
+      }
+      if (r > 0.6) return 0xff505050u;
+      if (r > 0.24 && r < 0.56) {   // jante à 5 branches : ajours sombres entre les branches (flous en mouvement)
+        double hole = std::clamp((-blurCos(a, 5, t.blur) - 0.15) * 3, 0.0, 1.0);
+        double avg = std::clamp(0.5 - 0.15 * 3, 0.0, 1.0);
+        hole = avg + (hole - avg) * t.contrast;
+        return mulRGB(0xffc0c0c0u, 1 - 0.75 * hole);
+      }
+      if (r < 0.2 && r > 0.11) {    // 5 écrous de roue
+        double nut = std::cos(5 * (a - 3.14159265 / 5));
+        if (nut > 0.8 && sharp > 0.2) return mulRGB(0xff404040u, 1 + (1 - sharp));
+      }
+      return r < 0.24 ? 0xffd8d8d8u : 0xffb0b0b0u;
+    }
+    default: return color;
+  }
+  return mulRGB(color, k);
+}
+
+void Renderer3D::addClipped(const Vec3 *in, int n, uint32_t color, float fixedDepth, int tex, float alpha) {
   const double zn = cam_.nearZ;
   // rejet rapide : tout derrière le plan proche
   bool any = false;
   for (int i = 0; i < n; i++) any |= in[i].z >= zn;
   if (!any) return;
   // découpage au plan proche
-  Vec3 out[16];
+  Vec3 out[40];
   int m = 0;
   for (int i = 0; i < n; i++) {
     const Vec3 &a = in[i], &b = in[(i + 1) % n];
@@ -110,18 +488,25 @@ void Renderer3D::addClipped(const Vec3 *in, int n, uint32_t color, float fixedDe
     ia = float(nx / (f * d)); ib = float(-ny / (fy * d));
     ic = float((nz - nx * cam_.cx / f + ny * cam_.cy / fy) / d);
   }
-  polys_.push_back({first, k, color, ia, ib, ic, ymin, ymax, fixedDepth});
+  const int cfirst = int(cv_.size());
+  cv_.insert(cv_.end(), out, out + m);
+  (alpha < 1.f ? trans_ : polys_).push_back({first, k, color, ia, ib, ic, ymin, ymax, fixedDepth, tex, alpha, cfirst, m});
 }
 
-void Renderer3D::rasterBand(uint32_t *out, int y0, int y1) {
-  for (int y = y0; y < y1; y++) {
+// lignes y ≡ k (mod n) : les lignes entrelacées équilibrent la charge entre cœurs (le sol texturé
+// est en bas de l'image, le ciel en haut). Les surfaces texturées ne sont ombrées qu'une fois, après
+// le test de profondeur de tous les polygones (ombrage différé : pas de calcul pour le sol caché par la route)
+void Renderer3D::rasterBand(uint32_t *out, int k, int n) {
+  for (int y = k; y < H_; y += n) {
     std::fill(out + size_t(y) * W_, out + size_t(y + 1) * W_, bg_);
     std::fill(zbuf_.begin() + size_t(y) * W_, zbuf_.begin() + size_t(y + 1) * W_, 0.f);
+    std::fill(idbuf_.begin() + size_t(y) * W_, idbuf_.begin() + size_t(y + 1) * W_, -1);
   }
   for (const SPoly &p : polys_) {
-    int ry0 = std::max(y0, int(std::ceil(p.ymin - 0.5f))), ry1 = std::min(y1, int(std::ceil(p.ymax - 0.5f)));
+    int ry0 = std::max(0, int(std::ceil(p.ymin - 0.5f))), ry1 = std::min(H_, int(std::ceil(p.ymax - 0.5f)));
+    ry0 += ((k - ry0) % n + n) % n;   // première ligne de ce cœur
     const float *X = &sx_[p.first], *Y = &sy_[p.first];
-    for (int y = ry0; y < ry1; y++) {
+    for (int y = ry0; y < ry1; y += n) {
       float yc = y + 0.5f, xl = 1e30f, xr = -1e30f;
       for (int i = 0; i < p.n; i++) {
         int j = (i + 1 == p.n) ? 0 : i + 1;
@@ -136,27 +521,173 @@ void Renderer3D::rasterBand(uint32_t *out, int y0, int y1) {
       if (xa >= xb) continue;
       uint32_t *o = out + size_t(y) * W_;
       float *zb = &zbuf_[size_t(y) * W_];
+      int32_t *id = &idbuf_[size_t(y) * W_];
+      const int32_t tid = p.tex;
       if (p.fixedDepth >= 0) {
         for (int x = xa; x < xb; x++)
-          if (p.fixedDepth >= zb[x]) { zb[x] = p.fixedDepth; o[x] = p.color; }
+          if (p.fixedDepth >= zb[x]) { zb[x] = p.fixedDepth; o[x] = p.color; id[x] = tid; }
       } else {
         float d = p.ia * (xa + 0.5f) + p.ib * yc + p.ic;
         for (int x = xa; x < xb; x++, d += p.ia)
-          if (d > zb[x]) { zb[x] = d; o[x] = p.color; }
+          if (d > zb[x]) { zb[x] = d; o[x] = p.color; id[x] = tid; }
       }
+    }
+  }
+  if (sky_) skyBand(out, k, n);
+  if (!texs_.empty()) shadeBand(out, k, n);
+  // surfaces semi-transparentes (ombres, fumée) : par-dessus l'image, sans écrire la profondeur
+  for (const SPoly &p : trans_) {
+    int ry0 = std::max(0, int(std::ceil(p.ymin - 0.5f))), ry1 = std::min(H_, int(std::ceil(p.ymax - 0.5f)));
+    ry0 += ((k - ry0) % n + n) % n;
+    const float *X = &sx_[p.first], *Y = &sy_[p.first];
+    const uint32_t cr = (p.color >> 16) & 255, cg = (p.color >> 8) & 255, cb = p.color & 255;
+    const uint32_t a = uint32_t(p.alpha * 256), na = 256 - a;
+    for (int y = ry0; y < ry1; y += n) {
+      float yc = y + 0.5f, xl = 1e30f, xr = -1e30f;
+      for (int i = 0; i < p.n; i++) {
+        int j = (i + 1 == p.n) ? 0 : i + 1;
+        float ya = Y[i], yb = Y[j];
+        if ((ya <= yc && yc < yb) || (yb <= yc && yc < ya)) {
+          float x = X[i] + (yc - ya) * (X[j] - X[i]) / (yb - ya);
+          xl = std::min(xl, x); xr = std::max(xr, x);
+        }
+      }
+      if (xl > xr) continue;
+      int xa = std::max(0, int(std::ceil(xl - 0.5f))), xb = std::min(W_, int(std::ceil(xr - 0.5f)));
+      uint32_t *o = out + size_t(y) * W_;
+      const float *zb = &zbuf_[size_t(y) * W_];
+      float d = p.ia * (xa + 0.5f) + p.ib * yc + p.ic;
+      for (int x = xa; x < xb; x++, d += p.ia)
+        if (d > zb[x] * 0.9995f) {
+          uint32_t c = o[x];
+          o[x] = 0xff000000u | (((((c >> 16) & 255) * na + cr * a) >> 8) << 16) | (((((c >> 8) & 255) * na + cg * a) >> 8) << 8) |
+                 (((c & 255) * na + cb * a) >> 8);
+        }
+    }
+  }
+}
+
+void Renderer3D::shadeBand(uint32_t *out, int k, int n) {
+  // ombrage des pixels texturés visibles, par suites de pixels du même polygone
+  const double f = cam_.focal, fy = cam_.focalY;
+  const double bx = M_[0][0] / f, by = M_[0][1] / f, bz = M_[0][2] / f;
+  for (int y = k; y < H_; y += n) {
+    uint32_t *o = out + size_t(y) * W_;
+    const int32_t *id = &idbuf_[size_t(y) * W_];
+    const double dy = -(y + 0.5 - cam_.cy) / fy;
+    // direction du rayon dans le monde : M^T · (dx, dy, 1), affine en x
+    const double ax = M_[1][0] * dy + M_[2][0], ay = M_[1][1] * dy + M_[2][1], az = M_[1][2] * dy + M_[2][2];
+    for (int x = 0; x < W_;) {
+      if (id[x] < 0) { x++; continue; }
+      const int tid = id[x];
+      int xe = x + 1;
+      while (xe < W_ && id[xe] == tid) xe++;
+      const TexPlane &tp = texs_[size_t(tid)];
+      const double num = tp.d - (tp.n.x * cam_.pos.x + tp.n.y * cam_.pos.y + tp.n.z * cam_.pos.z);
+      // point exact du monde et taille du pixel sur la surface pour le pixel x
+      auto exact = [&](int xx, Vec3 &P, double &foot) {
+        double dxc = xx + 0.5 - cam_.cx;
+        double rx = ax + bx * dxc, ry = ay + by * dxc, rz = az + bz * dxc;
+        double den = tp.n.x * rx + tp.n.y * ry + tp.n.z * rz;
+        double t = std::fabs(den) > 1e-12 ? num / den : 1e7;
+        if (t <= 0 || t > 1e7) t = 1e7;
+        P = {cam_.pos.x + rx * t, cam_.pos.y + ry * t, cam_.pos.z + rz * t};
+        double len = std::sqrt(rx * rx + ry * ry + rz * rz);
+        foot = t * len / f / std::max(0.08, std::fabs(den) / len);   // plus grand en incidence rasante
+      };
+      const bool interp = tp.t.kind == TEX_GROUND || tp.t.kind == TEX_ROAD || tp.t.kind == TEX_WALL;
+      if (!interp) {
+        for (int xx = x; xx < xe; xx++) { Vec3 P; double foot; exact(xx, P, foot); o[xx] = shade(tp, o[xx], P, foot); }
+      } else {
+        // points exacts tous les 16 pixels, interpolation linéaire entre eux (écart de perspective invisible)
+        for (int s0 = x; s0 < xe; s0 += 16) {
+          int s1 = std::min(xe - 1, s0 + 16);
+          Vec3 P0, P1; double f0, f1;
+          exact(s0, P0, f0); exact(s1, P1, f1);
+          double inv = 1.0 / std::max(1, s1 - s0);
+          Vec3 dP{(P1.x - P0.x) * inv, (P1.y - P0.y) * inv, (P1.z - P0.z) * inv};
+          double df = (f1 - f0) * inv;
+          int last = std::min(xe, s0 + 16);
+          for (int xx = s0; xx < last; xx++) {
+            int j = xx - s0;
+            o[xx] = shade(tp, o[xx], Vec3{P0.x + dP.x * j, P0.y + dP.y * j, P0.z + dP.z * j}, f0 + df * j);
+          }
+        }
+      }
+      x = xe;
     }
   }
 }
 
 void Renderer3D::finish(uint32_t *out) {
+  if (gpu_ && gpu_->render(*this, out)) return;   // carte graphique (OpenGL)
   int n = std::min(threads_, H_);
-  if (n <= 1) { rasterBand(out, 0, H_); return; }
-  std::vector<std::thread> th;
-  for (int k = 0; k < n; k++) {
-    int a = H_ * k / n, b = H_ * (k + 1) / n;
-    th.emplace_back([this, out, a, b] { rasterBand(out, a, b); });
+  if (n <= 1) rasterBand(out, 0, 1);
+  else {
+    std::vector<std::thread> th;
+    for (int k = 0; k < n; k++) th.emplace_back([this, out, k, n] { rasterBand(out, k, n); });
+    for (auto &t : th) t.join();
   }
-  for (auto &t : th) t.join();
+  if (!aa_ || W_ < 3 || H_ < 3) return;
+  // lissage lu dans l'image finie (inchangée pendant le calcul), pixels corrigés écrits ensuite
+  aaFix_.resize(size_t(std::max(n, 1)));
+  if (n <= 1) fxaaBand(out, 0, 1);
+  else {
+    std::vector<std::thread> th;
+    for (int k = 0; k < n; k++) th.emplace_back([this, out, k, n] { fxaaBand(out, k, n); });
+    for (auto &t : th) t.join();
+  }
+  for (auto &v : aaFix_) for (auto &f : v) out[f.first] = f.second;
 }
+
+// lissage des bords, d'après FXAA (Timothy Lottes) : là où le contraste local est fort, le pixel est
+// remplacé par une moyenne prise le long du bord (direction déduite des luminances voisines)
+void Renderer3D::fxaaBand(const uint32_t *src, int k, int n) {
+  auto luma = [](uint32_t c) { return int((((c >> 16) & 255) * 77 + ((c >> 8) & 255) * 150 + (c & 255) * 29) >> 8); };
+  std::vector<std::pair<size_t, uint32_t>> &fix = aaFix_[size_t(k)];
+  fix.clear();
+  auto fetch = [&](float x, float y, float rgb[3]) {   // lecture bilinéaire
+    x = std::clamp(x, 0.f, float(W_ - 1)); y = std::clamp(y, 0.f, float(H_ - 1));
+    int x0 = int(x), y0 = int(y), x1 = std::min(x0 + 1, W_ - 1), y1 = std::min(y0 + 1, H_ - 1);
+    float fx = x - float(x0), fy = y - float(y0);
+    uint32_t c00 = src[size_t(y0) * W_ + x0], c10 = src[size_t(y0) * W_ + x1], c01 = src[size_t(y1) * W_ + x0], c11 = src[size_t(y1) * W_ + x1];
+    for (int s = 0; s < 3; s++) {
+      int sh = 16 - 8 * s;
+      float a = float((c00 >> sh) & 255) * (1 - fx) + float((c10 >> sh) & 255) * fx, b = float((c01 >> sh) & 255) * (1 - fx) + float((c11 >> sh) & 255) * fx;
+      rgb[s] = a * (1 - fy) + b * fy;
+    }
+  };
+  const int ya = std::max(1, H_ * k / n), yb = std::min(H_ - 1, H_ * (k + 1) / n);
+  for (int y = ya; y < yb; y++) {
+    const uint32_t *r0 = src + size_t(y - 1) * W_, *r1 = r0 + W_, *r2 = r1 + W_;
+    for (int x = 1; x < W_ - 1; x++) {
+      const uint32_t cM = r1[x];
+      if (cM == r1[x - 1] && cM == r1[x + 1] && cM == r0[x] && cM == r2[x]) continue;   // aplat : rien à lisser
+      // contraste local, en entiers
+      int iM = luma(cM), iN = luma(r0[x]), iS = luma(r2[x]), iW = luma(r1[x - 1]), iE = luma(r1[x + 1]);
+      int imin = std::min({iM, iN, iS, iW, iE}), imax = std::max({iM, iN, iS, iW, iE});
+      if (imax - imin < std::max(16, imax * 42 >> 8)) continue;
+      const float s = 1.f / 255;
+      float lmin = imin * s, lmax = imax * s;
+      float lNW = luma(r0[x - 1]) * s, lNE = luma(r0[x + 1]) * s, lSW = luma(r2[x - 1]) * s, lSE = luma(r2[x + 1]) * s;
+      float dx = -((lNW + lNE) - (lSW + lSE)), dy = (lNW + lSW) - (lNE + lSE);
+      float reduce = std::max((lNW + lNE + lSW + lSE) * 0.03125f, 1.f / 128);
+      float rcp = 1.f / (std::min(std::fabs(dx), std::fabs(dy)) + reduce);
+      dx = std::clamp(dx * rcp, -8.f, 8.f); dy = std::clamp(dy * rcp, -8.f, 8.f);
+      float a1[3], a2[3], b1[3], b2[3];
+      const float fxp = float(x), fyp = float(y);
+      fetch(fxp + dx * (1.f / 3 - 0.5f), fyp + dy * (1.f / 3 - 0.5f), a1);
+      fetch(fxp + dx * (2.f / 3 - 0.5f), fyp + dy * (2.f / 3 - 0.5f), a2);
+      fetch(fxp - dx * 0.5f, fyp - dy * 0.5f, b1);
+      fetch(fxp + dx * 0.5f, fyp + dy * 0.5f, b2);
+      float A[3], B[3];
+      for (int s = 0; s < 3; s++) { A[s] = 0.5f * (a1[s] + a2[s]); B[s] = 0.5f * A[s] + 0.25f * (b1[s] + b2[s]); }
+      float lB = (B[0] * 77 + B[1] * 150 + B[2] * 29) * (1.f / 65280.f);
+      const float *C = (lB < lmin || lB > lmax) ? A : B;
+      fix.emplace_back(size_t(y) * W_ + x, 0xff000000u | uint32_t(C[0] + 0.5f) << 16 | uint32_t(C[1] + 0.5f) << 8 | uint32_t(C[2] + 0.5f));
+    }
+  }
+}
+
 
 }  // namespace scr

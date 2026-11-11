@@ -6,11 +6,14 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "crowd.hpp"
 #include "hdassets.hpp"
 #include "machine.hpp"
 #include "render3d.hpp"
+#include "scenery.hpp"
 #include "track.hpp"
 
 namespace scr {
@@ -22,21 +25,30 @@ struct OppPose {
   bool valid = false;
   double x = 0, yRaw = 0, z = 0;
   Vec3 right{1, 0, 0}, fwd{0, 0, 1};
+  double squat = 0;   // suspensions : enfoncement de la caisse sur les roues (unités voiture)
 };
 
 // réglages de la caméra, exprimés en pixels de l'écran d'origine (320×200)
 struct HdParams {
   double focal = 259, cx = 153.2, cy = 82.3;   // projection d'origine (calée sur le jeu)
   double aspect = 0.895;                       // focale verticale / horizontale
-  double eyeSide = -27, pitchOffset = -0.0056, yawOffset = 0;    // décalage latéral de l'œil, inclinaison de la caméra (rad)
+  double eyeSide = -4, pitchOffset = -0.0056, yawOffset = 0;     // décalage latéral de l'œil, inclinaison de la caméra (rad)
   double hScale = 0.261;                    // hauteur brute -> unités de géométrie
-  double eyeUp = 40, eyeFwd = -27;          // œil par rapport à la position de la voiture (unités de géométrie)
+  double eyeUp = 34, eyeFwd = -27;          // œil par rapport à la voiture (calé sur les bords de route d'origine, 4 circuits)
   int pitchSign = 1, rollSign = 1;
   bool cockpit = true;                     // incruster le cockpit d'origine
-  double interpDelay = 1.0;                // retard d'affichage en ticks (interpolation)
+  double interpDelay = 0.75;               // retard d'affichage en ticks (interpolation ; 0,75 : bords de route proches de l'original en roulant, mouvement fluide)
   double minClearance = 18;                // l'œil reste au moins à cette hauteur au-dessus de la route
-  bool builtinFlames = true;               // flammes du boost calculées si hd/ n'en fournit pas
+  bool builtinFlames = true;               // flammes du boost : sprites d'origine agrandis en HD
+  bool flameImages = false;                // utiliser les images de flammes du dossier hd/ (sinon ignorées)
   bool opponent3D = true;                  // voiture adverse redessinée en 3D (sinon : pixels d'origine)
+  bool highDetail = false;                 // détails élevés (F5) : sols et voiture texturés, roues rondes
+  bool antialias = true;                   // lissage des bords (FXAA) de la scène 3D
+  bool shadows = true;                     // ombres sous les voitures (posées sur la route, même en l'air)
+  bool particles = true;                   // étincelles et fumée aux chocs et réceptions brutales
+  bool scenery = true;                     // décor autour des circuits : tribunes, panneaux, arbres
+  int density = 1;                         // densité du décor, 1 à 4 (arbres, panneaux, tribunes, voitures garées)
+  bool sky = true;                         // ciel dégradé avec soleil et nuages (sinon couleur unie d'origine)
 };
 
 class HdView {
@@ -46,12 +58,19 @@ class HdView {
   int clampCount = 0;
   HdAssets assets;
   // charge les images de remplacement (dossier hd/) et demande à la machine de suivre ces sprites
-  int loadAssets(Machine &m, const std::string &dir);   // nombre d'images où l'œil a été remonté au-dessus de la route
+  int loadAssets(Machine &m, const std::string &dir);
+  // circuits changés en cours de jeu (d'origine <-> TNT) : tracés et décor recalculés
+  void setTracks(const Machine &m);
+  void setDensity(int d) { if (d != params.density) { params.density = d; scenery_.clear(); crowdTrack_ = -1; } }
+  // encouragements des tribunes (décor HD) ajoutés à une trame de son ; volume 0 à 2
+  void mixCrowd(int16_t *pcm, size_t n, int rate, double volume);
+  bool crowdWav = false;   // hd/foule.wav chargé   // nombre d'images où l'œil a été remonté au-dessus de la route
 
   // à appeler après chaque trame émulée
   void afterFrame(const Machine &m);
   // vrai si une course est en cours (physique active récemment)
   bool racing() const;
+  bool raceShown() const { return racing() || held_; }   // course en cours, ou fin de course encore affichée
   double now() const { return frame_; }    // trames émulées depuis le début
   double delay() const { return params.interpDelay * tickPeriod_; }
   // horloge de lecture : toujours croissante, rattrape en douceur l'instant visé (t - retard)
@@ -65,17 +84,86 @@ class HdView {
   void renderScene(const Pose &p, int track, uint32_t *out, int W, int H, double focal, double cx, double cy, const Machine &m,
                    const OppPose *opp = nullptr);
   OppPose opponentAt(double t) const;
+  // spectateur (course à plusieurs, après un abandon ou l'arrivée) : vue depuis la tribune du décor la
+  // plus proche de la voiture suivie (ghosts[follow]), tournée vers elle ; sans tribune, caméra de
+  // bord de piste ; track < 0 : circuit de la dernière course. Faux s'il n'y a aucune voiture à suivre.
+  bool renderSpectator(const Machine &m, int track, int follow, uint32_t *out, int W, int H);
+  void resetSpectator() { specStand_ = -1; specT_ = 0; }
+
+  // course à plusieurs : voitures des autres joueurs (fantômes : dessinées, sans collision),
+  // remplies par l'appelant avant render() ; render() calcule la place de leur nom à l'écran
+  struct Ghost {
+    OppPose pose; std::string name; bool boost = false; double sx = 0, sy = 0, dist = 0; bool onScreen = false; uint32_t id = 0;
+    int impact = 0; double impactStamp = 0;   // dernier choc signalé par ce joueur : force (1-63) et numéro (0-3)
+  };
+  std::vector<Ghost> ghosts;
+  double viewSide = 0;   // décalage latéral de la vue (+ : à droite) : départ de la grue du côté de sa place
+  // voiture d'un joueur (état de la physique, comme poseFromState) -> repère de voiture affichable
+  OppPose ghostFromPose(const Pose &p) const;
+  // étincelles et fumée à ce point (x, z : unités du monde ; yRaw : hauteur brute), force 1 à 63
+  void impactAt(double x, double yRaw, double z, int strength);
+  void stepParticles(double dt);   // dt en trames (60 par seconde)
 
  private:
   // hauteur brute de la route sous (x, z), la plus proche de yRef ; faux hors de la route
   bool surfaceRaw(const Track &t, double x, double z, double yRef, double &y);
   int hint_ = -1;
   double eyeLift_ = 0;   // remontée de l'œil au-dessus de la route (lissée)
-  struct Snap { double t; Pose p; int track; OppPose opp; };
+  struct Snap { double t; Pose p; int track; OppPose opp; int oppImpact = 0; };   // oppImpact : l'adversaire retombe (force)
   OppPose opponentFromGame(const Machine &m, int track);
-  double oppY_ = 0, oppVy_ = 0;
+  double oppY_ = 0, oppVy_ = 0, oppAir_ = 0, oppPx_ = 0, oppPz_ = 0;   // hauteur, vitesse verticale, hauteur au-dessus de la route
+  double oppRaw_ = 0; int oppStale_ = 0;   // hauteur lue dans le jeu, nombre d'états où elle n'a pas bougé
+  int oppImpact_ = 0;                // atterrissage brutal vu au dernier état
+  double oppImpactT_ = -1;           // dernier atterrissage déjà montré (étincelles)
+  // roues de l'adversaire : distance parcourue (unités du monde) -> angle de rotation
+  double oppRoll_ = 0, oppRollStep_ = 0, oppRollContrast_ = 1;   // angle affiché, pas par image, netteté
+  OppPose oppPrev_;
+  bool held_ = false;   // fin de course : scène figée encore affichée
+  CrowdSound crowd_;
+  std::vector<CrowdSound::Source> crowdSrc_; int crowdTrack_ = -1;
+  double oppSquat_ = 0, oppSquatT_ = -1;   // suspensions de l'adversaire : compression, temps de jeu
+  struct GhostWheels { OppPose prev; double roll = 0; double impactStamp = -1; };   // roues (et chocs) de chaque autre joueur
+  std::map<uint32_t, GhostWheels> ghostWheels_;
   bool oppHave_ = false;
-  void addCar(const OppPose &o, double hs, const Machine &m);
+  void addCar(const OppPose &o, double hs, const Machine &m, bool closed = false);
+  // monde 3D (ciel, sol, décor, circuit, voitures, particules) vu par la caméra c
+  void drawWorld(const Camera &c, int track, uint32_t *out, int W, int H, const Machine &m, const OppPose *opp);
+  // palette : celle du jeu pendant la course ; en spectateur (le jeu est revenu à ses menus), la
+  // dernière palette de course
+  uint32_t racePal_[16] = {};
+  bool racePalOk_ = false, useRacePal_ = false;
+  uint32_t palOf(const Machine &m, int i) const { return useRacePal_ && racePalOk_ ? racePal_[i & 15] : m.paletteARGB(i); }
+  int specStand_ = -1;                       // tribune du spectateur (indice dans le décor du circuit)
+  double specYaw_ = 0, specPitch_ = 0, specZoom_ = 1, specT_ = 0, specH_ = 0;   // visée et hauteur lissées, temps passé à cette tribune
+  uint32_t specFrame_ = 0;
+  std::map<int, std::vector<SceneObj>> scenery_;   // décor de chaque circuit (calculé à la première vue)
+  void drawScenery(const Camera &c, int track, double hs);
+  void drawCockpitHd(const Machine &m, uint32_t *out, int W, int H, double s, double ox);
+  void drawCockpitFront(uint32_t *out, int W, int H);
+  void drawCrack(uint32_t *out, int W, int H, double s);
+  static constexpr int CRACK_ROWS = 16;              // barre du haut de l'écran d'origine (fissure des dégâts)
+  std::vector<uint8_t> crack_;                       // pixels de fissure de l'image d'origine
+  std::vector<double> tubeTop_, tubeBot_;
+  // fissure HD : distance de chaque pixel de la bande du tube au tracé (et au liseré clair), recalculée
+  // quand la fissure change
+  uint64_t crackHash_ = 0; int crackW_ = 0, crackH_ = 0, crackY1_ = 0;
+  std::vector<float> crackD_, crackL_;            // tube du haut du cockpit HD, par colonne d'origine
+  int craneHold_ = 0;                                // grue active (images restantes)
+  int wheelFrozen_[2] = {-1, -1};                    // grue : image de roue figée (droite 0-2, gauche 3-5)
+  void drawSprites(const Machine &m, uint32_t *out, int W, int H, double s, double ox, double T, int lo, int hi, bool front);
+  int spriteLayer(int id) const;
+  static void scaleCockpit(const HdImage &ck, std::vector<uint32_t> &dst, int W, int H, double s, double ox);   // closed : flanc gauche dessiné aussi
+  void addFlames(const OppPose &o, double hs, int seed);   // flammes du boost d'une voiture fantôme
+  void addShadow(const OppPose &o, double hs, int track);   // ombre portée sur la route (ou le sol)
+  // particules : étincelles (opaques, en traînée) et fumée (semi-transparente)
+  struct Particle { Vec3 p, v; float life, maxLife, size; int kind; };
+  std::vector<Particle> particles_;
+  double partT_ = -1;
+  int ownDamage_ = -1, ownImpact_ = 0;   // dégâts de la voiture du joueur ($10939-$1093B) : nouveaux chocs
+  uint32_t partSeed_ = 12345;
+  void spawnImpact(const Vec3 &at, int strength, const Vec3 &dir);
+  void drawParticles(const Camera &c);
+  uint32_t flameTick_ = 0;
   std::vector<Track> tracks_;
   std::deque<Snap> snaps_;
   uint32_t lastTicks_ = 0, lastTickFrame_ = 0, frame_ = 0;
@@ -94,6 +182,14 @@ class HdView {
   double windTarget_ = 0, wind_ = 0;   // vent relatif (0 à l'arrêt, 1 à pleine vitesse)
   const HdSprite *spriteFor(int id, const Machine &m);
   std::vector<int> mapX_, mapY_;
+  // cockpit HD (hd/cockpit.png) : image agrandie à l'écran, cockpit d'origine au début de la course
+  std::vector<uint32_t> ckScaled_, ckFront_, ckBack_;
+  std::vector<uint8_t> ckRef_, ckIdx_;   // cockpit de référence et cockpit actuel, en index de palette
+  int ckW_ = 0, ckH_ = 0, ckRefFrames_ = 0;
+  const uint32_t *ckData_ = nullptr, *ckFrontData_ = nullptr, *ckBackData_ = nullptr;
+  void scaleCockpitImages(int W, int H, double s, double ox);
+  void drawPanelText(uint32_t *out, int W, int H);
+  static void blendImage(const std::vector<uint32_t> &img, uint32_t *out, size_t n);
   int mapW_ = 0, mapH_ = 0;
 };
 
