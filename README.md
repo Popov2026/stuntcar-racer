@@ -52,6 +52,8 @@ in JavaScript and a fully adjustable remake), `tools/` (disk extraction, decompr
 decoding, test emulator, disassembler), `docs/` (formats, addresses, decompiled routines),
 `falcon/` (Atari Falcon030 / CT60 version). The detailed documentation below is in French.
 
+**Website:** https://popov2026.github.io/stuntcar-racer/
+
 **License:** MIT (see `LICENSE`) for the code of this repository; the original game is not included.
 
 ### Code signing policy

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stunt Car Racer – native PC version</title>
+<meta name="description" content="Open-source native PC version of Stunt Car Racer (Atari ST, 1989): HD mode, online multiplayer, spectators. MIT license.">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d232a; --muted: #5b6672; --line: #dfe3e8;
+    --accent: #c8281e; --accent-text: #ffffff; --link: #1f5fbf; --code: #eef1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11151a; --panel: #181e25; --text: #e7ebef; --muted: #9aa5b1; --line: #29323c;
+      --accent: #e0483c; --accent-text: #ffffff; --link: #8cc0ff; --code: #222a33;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--link); }
+  main { max-width: 920px; margin: 0 auto; padding: 0 16px 48px; }
+  header { padding: 40px 0 16px; }
+  h1 { font-size: 34px; line-height: 1.15; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 36px 0 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 17px; margin: 22px 0 6px; }
+  .lead { font-size: 18px; color: var(--muted); margin: 0 0 20px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
+  .btn { display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: 600;
+         border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .note { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  figure { margin: 0; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 18px 0; }
+  .shots img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block; }
+  figcaption { color: var(--muted); font-size: 14px; margin-top: 6px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  code, pre { background: var(--code); border-radius: 6px; font: 14px/1.5 ui-monospace, Consolas, monospace; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; }
+  footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); margin-top: 40px; padding-top: 16px; }
+  .fr { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Stunt Car Racer – native PC version</h1>
+  <p class="lead">An open-source PC version of <strong>Stunt Car Racer</strong> (Geoff Crammond, Micro Style, 1989, Atari ST):
+    the original game runs exactly as it was, with an HD mode, online multiplayer for up to 6 players and spectators in the grandstands.</p>
+  <div class="buttons">
+    <a class="btn primary" href="https://github.com/Popov2026/stuntcar-racer/releases/latest">Download for Windows</a>
+    <a class="btn" href="https://github.com/Popov2026/stuntcar-racer">Source code</a>
+    <a class="btn" href="https://github.com/Popov2026/stuntcar-racer/issues">Report a problem</a>
+  </div>
+  <div class="note"><strong>No game data is included.</strong> The program reads the game from <em>your own</em> Atari ST disk image
+    (<code>.st</code> file), which you place in the <code>DISK</code> folder next to <code>scr.exe</code>.</div>
+</header>
+
+<div class="shots">
+  <figure><img src="img/high-detail-car.jpg" alt="Opponent car in high detail: V8 engine and windscreen on top" width="1370" height="500" loading="lazy">
+    <figcaption>High detail mode: opponent car with its V8 engine and windscreen.</figcaption></figure>
+  <figure><img src="img/spectator.jpg" alt="Spectator view from a grandstand during an online race" width="960" height="540" loading="lazy">
+    <figcaption>Spectator view from the grandstands during an online race.</figcaption></figure>
+</div>
+
+<h2>Features</h2>
+<ul>
+  <li><strong>The original game, unchanged:</strong> the Atari ST program is run by a 68000 CPU emulator (Musashi), with the original physics, tracks and menus.</li>
+  <li><strong>HD mode (F8):</strong> 1920×1080, 16:9, smooth picture; the 3D scene is redrawn in high definition by the graphics card (OpenGL 3.3) or the processor, with sky, scenery, grandstands and crowds, shadows, sparks and smoke.</li>
+  <li><strong>Sound:</strong> emulated YM2149 sound chip, optional realistic V8 engine, crowd cheering with Doppler effect.</li>
+  <li><strong>Online multiplayer:</strong> two-player races, a public room, private rooms and multi-car races of 2 to 6 players through a relay server; chat and horn.</li>
+  <li><strong>Spectators:</strong> players who are out, and players in a room who are not racing, watch the race from the grandstands.</li>
+  <li><strong>Local network</strong> play (Computer Link over the network), gamepad support, redefinable keys, English and French.</li>
+  <li><strong>Relay server</strong> for Windows and Linux, with a live status web page, also usable behind an HTTPS reverse proxy (WebSocket).</li>
+</ul>
+
+<h2>Download and install</h2>
+<ol>
+  <li>Download <code>StuntCarRacer-win64-vNN.zip</code> from the <a href="https://github.com/Popov2026/stuntcar-racer/releases/latest">latest release</a> and unzip it.</li>
+  <li>Put your Stunt Car Racer disk image (<code>.st</code>) in the <code>DISK</code> folder.</li>
+  <li>Double-click <code>scr.exe</code>. F1 opens the options menu (language, sound, HD, scenery…).</li>
+</ol>
+<p>To host your own relay server, use <code>ServeurRelaisStuntCar-vNN.zip</code> (Windows and Linux); see <code>README_SERVER.txt</code> inside.
+  Each release lists the SHA-256 checksums of its files.</p>
+
+<h2>Building from source</h2>
+<p>Linux, macOS or Windows with CMake 3.16+ and SDL2:</p>
+<pre>cmake -S native -B native/build &amp;&amp; cmake --build native/build --config Release
+native/build/scr Stunt_Car_Racer.st</pre>
+<p>The Windows release files are built by GitHub Actions from this repository with <code>native/build_release.sh</code>
+  (<a href="https://github.com/Popov2026/stuntcar-racer/blob/claude/blissful-goodall-f5bg4z/.github/workflows/build.yml">workflow</a>).</p>
+
+<h2 id="code-signing">Code signing policy</h2>
+<p>Free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>, certificate by
+  <a href="https://signpath.org">SignPath Foundation</a>.</p>
+<ul>
+  <li>Only the programs built from this repository by GitHub Actions are signed: <code>scr.exe</code>, <code>scr_headless.exe</code> and <code>scr_relay.exe</code>.</li>
+  <li>Committers and reviewers: <a href="https://github.com/Popov2026">Popov2026</a></li>
+  <li>Approvers: <a href="https://github.com/Popov2026">Popov2026</a> — every signing request is approved manually.</li>
+</ul>
+
+<h2 id="privacy">Privacy policy</h2>
+<p>This program will not transfer any information to other networked systems unless the player uses online multiplayer:</p>
+<ul>
+  <li>At start-up and in the <em>Online Multiplayer</em> menu, the game asks the relay server (the official one, or the one set in <code>scr.ini</code>) which version is current.</li>
+  <li>During online play it sends the nickname chosen by the player, the game version, the car positions and the chat messages; the relay forwards them to the other players. Nicknames and room codes also appear on the server's status page.</li>
+  <li>There is no account and no personal data is collected. The relay server keeps a log of connections (IP address, nickname) on the machine that runs it.</li>
+  <li>Local network play talks only to the other player's PC.</li>
+</ul>
+
+<h2>License</h2>
+<p>The code of this project is released under the <a href="https://github.com/Popov2026/stuntcar-racer/blob/claude/blissful-goodall-f5bg4z/LICENSE">MIT license</a>.
+  Stunt Car Racer itself (© Geoff Crammond / Micro Style, 1989) is not included. Third-party components: Musashi (MIT), SDL2 (zlib).</p>
+
+<h2 lang="fr">En français</h2>
+<p lang="fr" class="fr">Version PC open source de Stunt Car Racer (Atari ST, 1989) : le jeu d'origine tel quel, un mode HD, le multijoueur en ligne
+  jusqu'à 6 joueurs (salle publique, salles privées) et des spectateurs dans les tribunes. Aucune donnée du jeu n'est fournie : placez votre
+  propre image disque <code>.st</code> dans le dossier <code>DISK</code>. Téléchargement :
+  <a href="https://github.com/Popov2026/stuntcar-racer/releases/latest">dernière version</a>. Le jeu est en anglais, avec le français au choix
+  dans le menu d'options (F1). Les programmes sont signés gratuitement par SignPath Foundation ; le jeu ne contacte le serveur relais que pour
+  le multijoueur en ligne (voir la politique de confidentialité ci-dessus).</p>
+
+<footer>Stunt Car Racer – native PC version · <a href="https://github.com/Popov2026/stuntcar-racer">GitHub</a> · MIT license</footer>
+</main>
+</body>
+</html>
