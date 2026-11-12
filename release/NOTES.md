@@ -1,7 +1,8 @@
-## Stunt Car Racer v88
+## Stunt Car Racer v89
 
 **Français**
-- Nouveau en v88 : page d'accueil de la version navigateur (https://popov2026.github.io/stuntcar-racer/play/) : nombre de joueurs en ligne sur le serveur, disquette ST à fournir, fichier TNT facultatif pour The New Tracks, touches F1 (menu) et F8 (ancien / nouveau).
+- Nouveau en v89 : version navigateur, le plein écran (F11, menu F1 ou bouton de la page) montre l'image entière, et Échap revient correctement à la page (avant, on ne voyait plus que la moitié du jeu).
+- v88 : page d'accueil de la version navigateur (https://popov2026.github.io/stuntcar-racer/play/) : nombre de joueurs en ligne sur le serveur, disquette ST à fournir, fichier TNT facultatif pour The New Tracks, touches F1 (menu) et F8 (ancien / nouveau).
 - v87 : les images HD (cockpit, moteur, flammes, roues, grue) sont livrées dans le dossier hd du jeu et chargées par la version navigateur.
 - v86 : la version navigateur démarre directement en HD avec les détails élevés, le décor en densité 2 et le moteur V8 ; l'image .st se glisse sur la page une seule fois, ensuite un clic lance le jeu.
 - v85 : version navigateur, sans installation : https://popov2026.github.io/stuntcar-racer/play/ (choisissez votre image .st dans la page ; multijoueur en ligne compris).
@@ -22,7 +23,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v88: welcome page for the browser version (https://popov2026.github.io/stuntcar-racer/play/): number of players online on the server, ST disk to provide, optional TNT file for The New Tracks, F1 (menu) and F8 (old / new) keys.
+- New in v89: browser version, full screen (F11, F1 menu or the page's button) shows the whole picture, and Esc goes back to the page properly (before, only half of the game was visible).
+- v88: welcome page for the browser version (https://popov2026.github.io/stuntcar-racer/play/): number of players online on the server, ST disk to provide, optional TNT file for The New Tracks, F1 (menu) and F8 (old / new) keys.
 - v87: the HD images (cockpit, engine, flames, wheels, crane) come in the game's hd folder and are loaded by the browser version.
 - v86: the browser version starts straight in HD with high detail, scenery density 2 and the V8 engine; the .st image is dropped on the page only once, then one click starts the game.
 - v85: browser version, nothing to install: https://popov2026.github.io/stuntcar-racer/play/ (choose your .st image in the page; online multiplayer included).
