@@ -24,3 +24,4 @@ This license covers the code of this repository only. Stunt Car Racer itself
 (Geoff Crammond, Micro Style, 1989) is not included: the programs read the
 game from the user's own disk image. Third-party components keep their own
 licenses: Musashi 68000 emulator (MIT, fetched at build time) and SDL2 (zlib).
+The HD images in assets/hd are by Popov2026 and are distributed with this project.

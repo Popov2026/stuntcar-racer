@@ -5,7 +5,7 @@ name: Stunt Car Racer build
 
 on:
   push:
-    paths: ["native/**", "release/NOTES.md", ".github/workflows/build.yml"]
+    paths: ["native/**", "assets/**", "release/NOTES.md", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 permissions:

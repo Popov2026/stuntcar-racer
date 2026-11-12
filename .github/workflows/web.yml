@@ -4,7 +4,7 @@ name: Stunt Car Racer web
 
 on:
   push:
-    paths: ["native/**", ".github/workflows/web.yml"]
+    paths: ["native/**", "assets/**", ".github/workflows/web.yml"]
   workflow_dispatch:
 
 permissions:
@@ -48,8 +48,11 @@ jobs:
 
       - name: Dépôt dans docs/play (site du projet)
         run: |
-          mkdir -p docs/play
+          mkdir -p docs/play/hd
           cp webbuild/scr.js webbuild/scr.wasm native/web/index.html docs/play/
+          # images HD : chargées par la page au lancement (liste dans hd/files.txt)
+          cp assets/hd/*.png assets/hd/hd.ini docs/play/hd/
+          (cd docs/play/hd && ls *.png hd.ini > files.txt)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/play
