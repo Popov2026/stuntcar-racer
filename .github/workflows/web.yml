@@ -1,0 +1,62 @@
+# Stunt Car Racer : version navigateur (WebAssembly, Emscripten) compilée à partir de native/ et
+# déposée dans docs/play/ (site GitHub Pages : https://popov2026.github.io/stuntcar-racer/play/).
+name: Stunt Car Racer web
+
+on:
+  push:
+    paths: ["native/**", ".github/workflows/web.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+
+      - name: m68kmake (générateur du CPU 68000, pour la machine qui compile)
+        run: |
+          cmake -S native -B host -DSCR_WITH_SDL=OFF
+          cmake --build host --target m68kmake -j"$(nproc)"
+
+      - name: Compilation WebAssembly
+        run: |
+          emcmake cmake -S native -B webbuild -DCMAKE_BUILD_TYPE=Release -DSCR_M68KMAKE="$PWD/host/m68kmake"
+          cmake --build webbuild --target scr -j"$(nproc)"
+          ls -l webbuild/scr.js webbuild/scr.wasm
+
+      - name: Fichiers de la page
+        uses: actions/upload-artifact@v4
+        with:
+          name: stunt-car-racer-web
+          path: |
+            webbuild/scr.js
+            webbuild/scr.wasm
+            native/web/index.html
+
+      - name: Dépôt dans docs/play (site du projet)
+        run: |
+          mkdir -p docs/play
+          cp webbuild/scr.js webbuild/scr.wasm native/web/index.html docs/play/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/play
+          if git diff --cached --quiet; then echo "version web inchangée"; exit 0; fi
+          git commit -m "Version web compilée (docs/play)"
+          for i in 1 2 3; do
+            git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME" && exit 0
+            sleep 5
+          done
+          exit 1

@@ -38,6 +38,9 @@
 #include "gpu3d.hpp"
 #include "machine.hpp"
 #include "lang.hpp"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include "net.hpp"
 #include "track.hpp"
 #include "tnt.hpp"
@@ -55,7 +58,11 @@ struct Options {
   int scale = 3;
   bool fullscreen = false, smooth = false, hd = false, sound = true;
   double volume = 0.8;
+#ifdef __EMSCRIPTEN__
+  int hdW = 1280, hdH = 720;   // navigateur : rendu sur le processeur, un seul fil d'exécution
+#else
   int hdW = 1920, hdH = 1080;
+#endif
   std::string hdDir;
   bool highDetail = false; // détails élevés au démarrage (touche F5)
   bool shadows = true, particles = true, antialias = true, sky = true, scenery = true;   // HD : ombres, étincelles et fumée, lissage, ciel, décor
@@ -67,7 +74,11 @@ struct Options {
   std::string keyNames[6] = {"Up", "Down", "Left", "Right", "Space", "K"};   // touches : accélérer, freiner, gauche, droite, boost, klaxon
   bool engineV8 = false;
   bool french = false;   // langue des textes ajoutés : français (sinon anglais)
-  bool openGl = true;   // rendu 3D HD sur la carte graphique (OpenGL) ; sinon sur le processeur   // son du moteur : V8 réaliste à la place du son d'origine
+#ifdef __EMSCRIPTEN__
+  bool openGl = false;   // navigateur : pas d'OpenGL de bureau
+#else
+  bool openGl = true;
+#endif   // rendu 3D HD sur la carte graphique (OpenGL) ; sinon sur le processeur   // son du moteur : V8 réaliste à la place du son d'origine
   // multijoueur (câble « Computer Link » par le réseau)
   std::string relay;       // serveur relais : adresse[:port]
   std::string tntPath;     // circuits TNT : fichier SCR-TNT ou archive .lha (sinon cherché à côté du jeu)
@@ -2188,6 +2199,9 @@ int main(int argc, char **argv) {
           autoShots.erase(autoShots.begin() + long(k));
         } else k++;
       SDL_RenderPresent(ren);
+#ifdef __EMSCRIPTEN__
+      emscripten_sleep(0);   // navigateur : la page reste réactive (affichage, sons, touches)
+#endif
       // compteur d'images par seconde dans le titre
       fpsN++;
       double el = double(SDL_GetPerformanceCounter() - fpsT0) / double(freq);
@@ -2228,6 +2242,9 @@ int main(int argc, char **argv) {
           autoShots.erase(autoShots.begin() + long(k));
         } else k++;
       SDL_RenderPresent(ren);
+#ifdef __EMSCRIPTEN__
+      emscripten_sleep(0);   // navigateur : la page reste réactive (affichage, sons, touches)
+#endif
       if (!n) SDL_Delay(1);
     }
   }
