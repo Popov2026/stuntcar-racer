@@ -1,7 +1,8 @@
-## Stunt Car Racer v84
+## Stunt Car Racer v85
 
 **Français**
-- Nouveau en v84 : plus de fichier .bat dans les zips (fausse alerte d'antivirus) ; scr_relay.exe garde lui-même son journal dans scr_relay.log.
+- Nouveau en v85 : version navigateur, sans installation : https://popov2026.github.io/stuntcar-racer/play/ (choisissez votre image .st dans la page ; multijoueur en ligne compris).
+- v84 : plus de fichier .bat dans les zips (fausse alerte d'antivirus) ; scr_relay.exe garde lui-même son journal dans scr_relay.log.
 - v83 : en détails élevés (F5), le dessus des voitures adverses n'est plus tout rose : moteur V8 texturé à l'emplacement des flammes et pare-brise teinté.
 - v82 : « Public room » dans le menu Online Multiplayer, une salle ouverte à tous ; quand une course est lancée dans une salle, les joueurs de la salle qui n'y participent pas la regardent depuis les tribunes (serveur v82 requis).
 - v81 : en course à plusieurs, un joueur éliminé (voiture détruite) ou déjà arrivé regarde la suite de la course depuis les tribunes du décor ; flèches gauche / droite : autre voiture, Entrée : menu du groupe.
@@ -15,10 +16,11 @@
 - Le serveur relais peut être placé derrière un reverse proxy web HTTPS (par exemple celui d'un NAS Synology) : le jeu s'y connecte en WebSocket sécurisée (`relais = wss://votre.domaine`), le serveur accepte ces connexions sur son port habituel en plus des connexions directes. Mode d'emploi : `README_SERVER.txt`, section 6 (côté Synology, ajouter l'en-tête personnalisé « WebSocket »).
 - Le serveur voit la vraie adresse des joueurs derrière le proxy (X-Real-IP / X-Forwarded-For) ; les requêtes web des robots reçoivent un 404 et restent invisibles.
 - Toute la documentation (README) a maintenant une version anglaise complète ; les fichiers de réglages sont commentés en français et en anglais.
-- Jeu et serveur relais en v84 : mettre les deux à jour.
+- Jeu et serveur relais en v85 : mettre les deux à jour.
 
 **English**
-- New in v84: no more .bat file in the zips (antivirus false alarm); scr_relay.exe keeps its own log in scr_relay.log.
+- New in v85: browser version, nothing to install: https://popov2026.github.io/stuntcar-racer/play/ (choose your .st image in the page; online multiplayer included).
+- v84: no more .bat file in the zips (antivirus false alarm); scr_relay.exe keeps its own log in scr_relay.log.
 - v83: in high detail (F5), the top of the opponent cars is no longer plain pink: textured V8 engine where the flames come out, and a tinted windscreen.
 - v82: "Public room" in the Online Multiplayer menu, a room open to everyone; when a race is started in a room, the players in the room who are not taking part watch it from the grandstands (server v82 required).
 - v81: in multi-car races, a player who is out (car wrecked) or has finished watches the rest of the race from the grandstands of the scenery; left / right arrows: another car, Enter: group menu.
@@ -32,8 +34,8 @@
 - The relay server can now sit behind an HTTPS web reverse proxy (for example a Synology NAS): the game connects through a secure WebSocket (`relais = wss://your.domain`); the server accepts these connections on its usual port as well as direct ones. How-to: `README_SERVER.txt`, section 6 (on Synology, add the "WebSocket" custom header).
 - Behind the proxy the server sees the players' real addresses (X-Real-IP / X-Forwarded-For); robots' web requests get a 404 and stay invisible.
 - All readmes (README) now have a full English version; settings files are commented in French and English.
-- Game and relay server are both v84: update both.
+- Game and relay server are both v85: update both.
 
 ### Fichiers / Files
-- `StuntCarRacer-win64-v84.zip` : le jeu pour Windows 64 bits / the game for 64-bit Windows (no original game data: put your own `.st` disk image in `DISK`, see `README.txt`).
-- `ServeurRelaisStuntCar-v84.zip` : le serveur relais (Windows et Linux) / the relay server (Windows and Linux).
+- `StuntCarRacer-win64-v85.zip` : le jeu pour Windows 64 bits / the game for 64-bit Windows (no original game data: put your own `.st` disk image in `DISK`, see `README.txt`).
+- `ServeurRelaisStuntCar-v85.zip` : le serveur relais (Windows et Linux) / the relay server (Windows and Linux).
