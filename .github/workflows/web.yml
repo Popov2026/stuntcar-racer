@@ -44,12 +44,12 @@ jobs:
           path: |
             webbuild/scr.js
             webbuild/scr.wasm
-            native/web/index.html
+            native/web/*
 
       - name: Dépôt dans docs/play (site du projet)
         run: |
           mkdir -p docs/play/hd
-          cp webbuild/scr.js webbuild/scr.wasm native/web/index.html docs/play/
+          cp webbuild/scr.js webbuild/scr.wasm native/web/* docs/play/
           # images HD : chargées par la page au lancement (liste dans hd/files.txt)
           cp assets/hd/*.png assets/hd/hd.ini docs/play/hd/
           (cd docs/play/hd && ls *.png hd.ini > files.txt)

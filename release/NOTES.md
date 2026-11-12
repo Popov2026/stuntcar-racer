@@ -1,7 +1,8 @@
-## Stunt Car Racer v87
+## Stunt Car Racer v88
 
 **Français**
-- Nouveau en v87 : les images HD (cockpit, moteur, flammes, roues, grue) sont livrées dans le dossier hd du jeu et chargées par la version navigateur.
+- Nouveau en v88 : page d'accueil de la version navigateur (https://popov2026.github.io/stuntcar-racer/play/) : nombre de joueurs en ligne sur le serveur, disquette ST à fournir, fichier TNT facultatif pour The New Tracks, touches F1 (menu) et F8 (ancien / nouveau).
+- v87 : les images HD (cockpit, moteur, flammes, roues, grue) sont livrées dans le dossier hd du jeu et chargées par la version navigateur.
 - v86 : la version navigateur démarre directement en HD avec les détails élevés, le décor en densité 2 et le moteur V8 ; l'image .st se glisse sur la page une seule fois, ensuite un clic lance le jeu.
 - v85 : version navigateur, sans installation : https://popov2026.github.io/stuntcar-racer/play/ (choisissez votre image .st dans la page ; multijoueur en ligne compris).
 - v84 : plus de fichier .bat dans les zips (fausse alerte d'antivirus) ; scr_relay.exe garde lui-même son journal dans scr_relay.log.
@@ -21,7 +22,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v87: the HD images (cockpit, engine, flames, wheels, crane) come in the game's hd folder and are loaded by the browser version.
+- New in v88: welcome page for the browser version (https://popov2026.github.io/stuntcar-racer/play/): number of players online on the server, ST disk to provide, optional TNT file for The New Tracks, F1 (menu) and F8 (old / new) keys.
+- v87: the HD images (cockpit, engine, flames, wheels, crane) come in the game's hd folder and are loaded by the browser version.
 - v86: the browser version starts straight in HD with high detail, scenery density 2 and the V8 engine; the .st image is dropped on the page only once, then one click starts the game.
 - v85: browser version, nothing to install: https://popov2026.github.io/stuntcar-racer/play/ (choose your .st image in the page; online multiplayer included).
 - v84: no more .bat file in the zips (antivirus false alarm); scr_relay.exe keeps its own log in scr_relay.log.
