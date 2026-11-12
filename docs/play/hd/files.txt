@@ -1,6 +1,7 @@
 cockpit.png
 cockpit_avant.png
 cockpit_fond.png
+foule.wav
 hd.ini
 sprite_00.png
 sprite_01.png
