@@ -81,7 +81,9 @@ if(EMSCRIPTEN)
   endif()
   target_compile_options(scrcore PRIVATE -fexceptions)
   add_executable(scr src/main.cpp src/gpu3d.cpp)
-  target_compile_options(scr PRIVATE -sUSE_SDL=2 -fexceptions)
+  # main.cpp sans exceptions : avec, presque chaque appel passe par un intermédiaire JavaScript
+  # (invoke_*) qu'Asyncify ne sait pas suspendre (« invalid state » au premier rendu de la main)
+  target_compile_options(scr PRIVATE -sUSE_SDL=2)
   target_link_libraries(scr scrcore)
   target_link_options(scr PRIVATE -sUSE_SDL=2 -fexceptions -O3
     -sASYNCIFY -sASYNCIFY_IGNORE_INDIRECT=1 -sASYNCIFY_STACK_SIZE=1048576
