@@ -26,7 +26,7 @@
   input[type=file] { display: none; }
   #game { display: none; }
   #wrap { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
-  canvas#canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; outline: none; }
+  canvas#canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; image-rendering: pixelated; outline: none; }
   #status { min-height: 1.5em; }
   .keys { font-size: 14px; }
   kbd { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 13px ui-monospace, Consolas, monospace; }
@@ -108,7 +108,7 @@
     if (!ready || !haveDisk || running) return;
     running = true;
     $('setup').style.display = 'none';
-    $('game').style.display = '';
+    $('game').style.display = 'block';
     $('canvas').focus();
     setInterval(save, 5000);                  // options changées dans le jeu (scr.ini)
     window.addEventListener('beforeunload', save);
