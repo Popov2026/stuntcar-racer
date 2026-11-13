@@ -1,7 +1,8 @@
-## Stunt Car Racer v97
+## Stunt Car Racer v98
 
 **Français**
-- Nouveau en v97 : serveur relais : page d'administration /admin protégée par mot de passe (ligne « admin = ... » de scr_relay.ini) : codes de licence utilisés (quand, combien de fois, depuis quelle adresse), joueurs avec leur adresse et ce qu'ils font, robots refusés, adresses bloquées et journal. 3 mots de passe faux bloquent l'adresse 1 h.
+- Nouveau en v98 : voitures adverses texturées (détails élevés) : les deux flancs sont dessinés, avec une vitre latérale de chaque côté ; on ne voit plus le moteur ni le pare-brise à travers la carrosserie (version Windows et navigateur).
+- v97 : serveur relais : page d'administration /admin protégée par mot de passe (ligne « admin = ... » de scr_relay.ini) : codes de licence utilisés (quand, combien de fois, depuis quelle adresse), joueurs avec leur adresse et ce qu'ils font, robots refusés, adresses bloquées et journal. 3 mots de passe faux bloquent l'adresse 1 h.
 - v96 : version navigateur : plusieurs codes de licence peuvent charger la disquette chiffrée ; le serveur relais note dans son journal quel code a servi (lignes « licence = NOM EMPREINTE » de scr_relay.ini, données par native/tools/encrypt_disk.mjs).
 - v95 : serveur relais : positions de course limitées à 100 par seconde et par joueur (un jeu trafiqué ne peut plus saturer la connexion des autres). Relecture de sécurité du serveur et test d'attaque (données au hasard, WebSocket mal formées, inondation) : aucune faille trouvée.
 - v94 : sécurité : le jeu vérifie sa disquette (CRC du programme) et refuse une version modifiée ou piégée ; lecture des disquettes et des archives TNT protégée contre les fichiers mal formés (plus aucun dépassement de mémoire possible).
@@ -31,7 +32,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v97: relay server: password-protected /admin page ("admin = ..." line in scr_relay.ini): licence codes used (when, how often, from which address), players with their address and what they are doing, refused bots, blocked addresses and the log. 3 wrong passwords block the address for 1 h.
+- New in v98: textured opponent cars (high detail): both sides are drawn, with a side window on each side; the engine and windscreen no longer show through the body (Windows and browser versions).
+- v97: relay server: password-protected /admin page ("admin = ..." line in scr_relay.ini): licence codes used (when, how often, from which address), players with their address and what they are doing, refused bots, blocked addresses and the log. 3 wrong passwords block the address for 1 h.
 - v96: browser version: several licence codes can load the encrypted disk; the relay server logs which code was used ("licence = NAME FINGERPRINT" lines in scr_relay.ini, given by native/tools/encrypt_disk.mjs).
 - v95: relay server: race positions limited to 100 per second per player (a tampered game can no longer flood the other players' connections). Security review of the server and attack test (random data, malformed WebSocket, flooding): no flaw found.
 - v94: security: the game checks its disk (program CRC) and refuses a modified or booby-trapped version; reading of disks and TNT archives is protected against malformed files (no more possible memory overflow).
