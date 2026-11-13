@@ -54,6 +54,14 @@
   .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; }
   .tag.req { background: rgba(227,57,43,.18); color: #ff8a80; }
   input[type=file] { display: none; }
+  /* code de licence : chargement automatique de la disquette (accès accordé par l'auteur du projet) */
+  .lic { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
+  .lic .icon { font-size: 20px; }
+  .lic input { flex: 1; min-width: 0; font: 600 15px ui-monospace, Consolas, monospace; letter-spacing: 1px; text-transform: uppercase;
+               padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); }
+  .lic button { font: inherit; font-weight: 700; font-size: 14px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
+  .lic button:disabled { opacity: .5; cursor: default; }
   #play { width: 100%; font: inherit; font-size: 22px; font-weight: 900; font-style: italic; letter-spacing: .5px; text-transform: uppercase;
           padding: 16px; border: 0; border-radius: 12px; color: #fff; cursor: pointer; margin-top: 6px;
           background: linear-gradient(180deg, #f04a3a, #b8241a); box-shadow: 0 8px 24px rgba(227,57,43,.35); }
@@ -168,10 +176,15 @@
         <label class="slot" id="slotDisk" for="fileDisk">
           <span class="icon">💾</span>
           <span class="txt"><span class="name"><span data-t="disk">Atari ST floppy disk</span> (.st)<span class="tag req" data-t="required">required</span></span><br>
-            <span class="sub" data-t="diskSub">Loads automatically. Drop another disk here or click.</span></span>
+            <span class="sub" data-t="diskSub">Your own Stunt Car Racer disk image: drop it here or click. Or enter your licence code below.</span></span>
           <span class="state" id="stDisk"></span>
         </label>
         <input id="fileDisk" type="file" accept=".st,.ST">
+        <form class="lic" id="licForm" autocomplete="off">
+          <span class="icon">🔑</span>
+          <input id="licCode" type="text" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" aria-label="Licence code">
+          <button id="licBtn" type="submit" data-t="licBtn">Load with licence code</button>
+        </form>
         <div class="modes">
           <button class="mode" id="playHd" disabled><img src="mode_hd.jpg" alt="" width="480" height="270"><b data-t="playHd">Play HD</b><span data-t="playHdSub">Modernised: scenery, textures, V8</span></button>
           <button class="mode" id="playClassic" disabled><img src="mode_classic.jpg" alt="" width="480" height="270"><b data-t="playClassic">Classic</b><span data-t="playClassicSub">1989 look, high resolution, no extras</span></button>
@@ -265,7 +278,8 @@
     project: 'Projet', win: 'Version Windows',
     tagline: "Le classique Atari ST de Geoff Crammond (1989) dans votre navigateur — en HD, avec des courses en ligne.",
     ready: 'Préparez-vous', disk: 'Disquette Atari ST', required: 'obligatoire', 
-    diskSub: 'Chargement automatique. Déposez une autre disquette ici ou cliquez.',
+    diskSub: 'Votre propre image de la disquette Stunt Car Racer : déposez-la ici ou cliquez. Ou entrez votre code de licence ci-dessous.',
+    licBtn: 'Charger avec le code', licBad: 'Code de licence incorrect.', needDisk: 'Ajoutez votre disquette ou entrez un code de licence.',
     playHd: 'Jouer en HD', playHdSub: 'Modernisée : décor, textures, V8', playClassic: 'Classique', playClassicSub: 'Le look 1989 en haute résolution, sans ajouts',
     privacy: "Vos fichiers restent dans ce navigateur : rien n'est envoyé, et ils sont gardés pour vos prochaines visites. Aucune donnée du jeu n'est fournie avec cette page.",
     keysTitle: 'Touches', kF1: '<b>Menu</b> – options : langue, son, HD, décor, touches, en ligne…',
@@ -289,7 +303,7 @@
     offline: 'Serveur en ligne injoignable pour le moment',
     badDisk: "Ce fichier n'est pas une image de disquette Atari ST (.st).",
     diskLoading: 'Téléchargement de la disquette…', diskReady: 'Disquette prête.',
-    diskError: 'Impossible de charger stuntcar.st. Vérifiez sa présence à côté de index.html ou sélectionnez une disquette.',
+    diskError: 'Chargement impossible. Réessayez ou ajoutez votre disquette.',
     diskCached: 'Échec du téléchargement. La disquette enregistrée reste disponible.',
     fileError: 'Impossible de préparer cette disquette.', engineError: 'Impossible de démarrer le moteur du jeu.',
     loadingGame: 'Chargement du jeu…', ended: 'Partie terminée. Rechargez la page pour rejouer.'
@@ -300,7 +314,8 @@
     offline: 'Online server unreachable right now',
     badDisk: 'This file is not an Atari ST disk image (.st).',
     diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
-    diskError: 'Could not load stuntcar.st. Check that it is next to index.html or select a disk.',
+    diskError: 'Could not load the disk. Try again or add your own disk.',
+    licBad: 'Wrong licence code.', needDisk: 'Add your disk or enter a licence code.',
     diskCached: 'Download failed. The saved disk is available.',
     fileError: 'Could not prepare this disk.', engineError: 'Could not start the game engine.',
     loadingGame: 'Loading the game…', ended: 'The game has ended. Reload the page to play again.'
@@ -342,6 +357,7 @@
 
     if (diskBusy) $('stDisk').textContent = '…';
     $('fileDisk').disabled = !ready || diskBusy;
+    $('licBtn').disabled = !ready || diskBusy;
     $('playHd').disabled = $('playClassic').disabled = !ready || !haveDisk || diskBusy;
   }
 
@@ -393,7 +409,8 @@
         if (err) console.warn('syncfs', err);
         ready = true;
         haveDisk = FS.analyzePath(DISK).exists;
-        loadDisk();
+        status(haveDisk ? '' : 'needDisk');
+        refresh();
       });
     },
     onExit: () => { running = false; save(); document.body.classList.remove('playing'); status('ended'); }
@@ -401,63 +418,39 @@
 
   // ---------------------------------------------------------------- image disque du joueur
 
-  async function loadDisk() {
-    diskBusy = true;
+  // disquette chiffrée (stuntcar.st.enc) : inutilisable sans le code de licence, déchiffrée ici
+  // (PBKDF2-SHA256 250 000 tours + AES-256-GCM ; voir native/tools/encrypt_disk.mjs)
+  async function loadDisk(code) {
+    const norm = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (norm.length < 16) { status('licBad'); return; }
+    diskBusy = true; diskPercent = null;
     status('diskLoading');
     refresh();
     try {
-      const response = await fetch('./stuntcar.st');
+      const response = await fetch('./stuntcar.st.enc', { cache: 'no-store' });
       if (!response.ok) throw new Error('HTTP ' + response.status);
-      if ((response.headers.get('Content-Type') || '').toLowerCase().includes('text/html')) {
-        throw new Error('Expected a disk image, received HTML');
-      }
-
-      const reader = response.body?.getReader();
+      const buf = new Uint8Array(await response.arrayBuffer());
+      if (buf.length < 33 || new TextDecoder().decode(buf.subarray(0, 5)) !== 'SCRE1') throw new Error('format');
+      const salt = buf.subarray(5, 21), iv = buf.subarray(21, 33);
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(norm), 'PBKDF2', false, ['deriveKey']);
+      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base,
+        { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
       let disk;
-      if (reader) {
-        const encoding = response.headers.get('Content-Encoding');
-        const length = Number(response.headers.get('Content-Length'));
-        const total = (!encoding || encoding.toLowerCase() === 'identity')
-          && Number.isSafeInteger(length) && length > 0 ? length : null;
-        const chunks = [];
-        let received = 0;
-        diskPercent = total === null ? null : 0;
-        status('diskLoading');
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.byteLength;
-            diskPercent = total && received <= total ? Math.floor(100 * received / total) : null;
-            status('diskLoading');
-          }
-        } finally {
-          reader.releaseLock();
-        }
-        if (total !== null && received !== total) throw new Error('Unexpected disk size');
-        disk = new Uint8Array(received);
-        let offset = 0;
-        for (const chunk of chunks) {
-          disk.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-      } else {
-        disk = new Uint8Array(await response.arrayBuffer());
-      }
-      if (disk.length < 300000) throw new Error('Invalid disk image size');
+      try { disk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, buf.subarray(33))); }
+      catch (e) { status('licBad'); return; }
       FS.writeFile(DISK, disk);
       haveDisk = true;
       save();
       status('diskReady');
     } catch (e) {
-      console.warn('stuntcar.st', e);
-      status(haveDisk ? 'diskCached' : 'diskError');
+      console.warn('stuntcar.st.enc', e);
+      status('diskError');
     } finally {
       diskBusy = false;
       refresh();
     }
   }
+  $('licForm').addEventListener('submit', (e) => { e.preventDefault(); if (ready && !running && !diskBusy) loadDisk($('licCode').value); });
 
   async function useFile(f) {
     if (!f || !ready || running || diskBusy) return;
@@ -563,7 +556,7 @@
   $('playHd').addEventListener('click', () => start('modern'));
   $('playClassic').addEventListener('click', () => start('classic'));
   window.addEventListener('keydown', (e) => {
-    if (!running) { if (e.key === 'Enter') start('modern'); return; }
+    if (!running) { if (e.key === 'Enter' && !(e.target && e.target.tagName === 'INPUT')) start('modern'); return; }
     // touches du jeu que le navigateur garderait pour lui (F5 recharge la page, F1 aide, F11...)
     if (/^F\d+$/.test(e.key) || ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace'].includes(e.key)) e.preventDefault();
   }, true);
