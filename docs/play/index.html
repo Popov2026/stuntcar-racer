@@ -73,6 +73,9 @@
   /* vidéo (chargée seulement au clic) et version Windows */
   .show { display: grid; grid-template-columns: 1.6fr 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 820px) { .show { grid-template-columns: 1fr; } }
+  .show.video-expanded { grid-template-columns: minmax(0, 1fr); }
+  .video-expanded #video { background: #000 !important; cursor: default; }
+  .video-expanded #video::after { content: none; }
   .show h2 { font-size: 19px; margin: 0 0 12px; }
   .video { position: relative; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #000 center / cover no-repeat; cursor: pointer; border: 0; padding: 0; width: 100%; display: block; }
   .video::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.25); transition: background .15s; }
@@ -219,6 +222,7 @@
     online: (p, g) => p + (p > 1 ? ' joueurs' : ' joueur') + ' en ligne' + (g > 0 ? ' · ' + g + (g > 1 ? ' courses' : ' course') + ' en cours' : ''),
     offline: 'Serveur en ligne injoignable pour le moment',
     badDisk: "Ce fichier n'est pas une image de disquette Atari ST (.st).",
+    diskBoot: 'Lecture de la disquette…',
     diskLoading: 'Téléchargement de la disquette…', diskReady: 'Disquette prête.',
     diskError: 'Impossible de charger stuntcar.st. Vérifiez sa présence à côté de index.html ou sélectionnez une disquette.',
     diskCached: 'Échec du téléchargement. La disquette enregistrée reste disponible.',
@@ -230,6 +234,7 @@
     online: (p, g) => p + (p === 1 ? ' player' : ' players') + ' online' + (g > 0 ? ' · ' + g + (g === 1 ? ' race' : ' races') + ' in progress' : ''),
     offline: 'Online server unreachable right now',
     badDisk: 'This file is not an Atari ST disk image (.st).',
+    diskBoot: 'Reading the disk…',
     diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
     diskError: 'Could not load stuntcar.st. Check that it is next to index.html or select a disk.',
     diskCached: 'Download failed. The saved disk is available.',
@@ -250,11 +255,11 @@
   function status(k) {
     statusKey = k;
     const progress = $('diskProgress');
-    progress.hidden = k !== 'diskLoading';
-    progress.setAttribute('aria-label', T('diskLoading'));
+    progress.hidden = k !== 'diskLoading' && k !== 'diskBoot';
+    progress.setAttribute('aria-label', T(k === 'diskBoot' ? 'diskBoot' : 'diskLoading'));
     if (diskPercent === null) progress.removeAttribute('value');
     else progress.value = diskPercent;
-    const suffix = k === 'diskLoading' && diskPercent !== null ? ' ' + diskPercent + '%' : '';
+    const suffix = (k === 'diskLoading' || k === 'diskBoot') && diskPercent !== null ? ' ' + diskPercent + '%' : '';
     const message = k ? T(k) + suffix : '';
     if ($('status').textContent !== message) $('status').textContent = message;
   }
@@ -419,8 +424,59 @@
   });
 
   // ---------------------------------------------------------------- lancement
+
+  async function playDriveSound() {
+    const Audio = window.AudioContext || window.webkitAudioContext;
+    if (!Audio) return;
+    const audio = new Audio();
+    try {
+      await audio.resume();
+      const buffer = audio.createBuffer(1, audio.sampleRate * 6, audio.sampleRate);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) {
+        const t = i / audio.sampleRate;
+        const step = t % 0.37;
+        const motor = 0.018 * Math.sin(2 * Math.PI * 145 * t);
+        const seek = step < 0.09 ? 0.13 * Math.exp(-42 * step) : 0;
+        const envelope = Math.min(1, t * 35, (6 - t) * 18);
+        samples[i] = (motor + (0.022 + seek) * (2 * Math.random() - 1)) * envelope;
+      }
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audio.destination);
+      source.onended = () => audio.close().catch(() => {});
+      source.start();
+    } catch (e) {
+      await audio.close();
+    }
+  }
+
+  async function simulateDiskRead() {
+    diskBusy = true;
+    diskPercent = 0;
+    status('diskBoot');
+    refresh();
+    playDriveSound().catch(() => {});
+
+    const started = performance.now();
+    await new Promise((resolve) => {
+      function tick() {
+        diskPercent = Math.min(100, Math.floor((performance.now() - started) / 60));
+        status('diskBoot');
+        if (diskPercent === 100) resolve();
+        else requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+    diskBusy = false;
+    diskPercent = null;
+    status('');
+    refresh();
+  }
+
   async function start() {
     if (!ready || !haveDisk || running || diskBusy) return;
+    await simulateDiskRead();
     running = true;
     document.body.classList.add('playing');
     $('canvas').focus();
@@ -444,7 +500,17 @@
     const f = document.createElement('iframe');
     f.src = 'https://www.youtube-nocookie.com/embed/sL0vGRPCEpc?autoplay=1&rel=0';
     f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; f.allowFullscreen = true; f.title = 'Stunt Car Racer';
-    this.innerHTML = ''; this.appendChild(f);
+    const show = this.closest('.show');
+    const width = this.getBoundingClientRect().width;
+    const player = document.createElement('div');
+    player.id = this.id;
+    player.className = this.className;
+    player.style.maxWidth = (width * 2) + 'px';
+    player.style.marginInline = 'auto';
+    player.appendChild(f);
+    this.replaceWith(player);
+    show.classList.add('video-expanded');
+    f.focus();
   });
   // retour du plein écran (Échap) : le jeu garde le clavier
   document.addEventListener('fullscreenchange', () => { if (running) $('canvas').focus(); });
