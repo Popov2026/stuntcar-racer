@@ -83,7 +83,17 @@
   .video .playbtn { position: absolute; z-index: 1; left: 50%; top: 50%; width: 76px; height: 54px; margin: -27px 0 0 -38px; border-radius: 14px; background: var(--accent);
                     box-shadow: 0 6px 20px rgba(0,0,0,.5); }
   .video .playbtn::before { content: ""; position: absolute; left: 31px; top: 16px; border-style: solid; border-width: 11px 0 11px 19px; border-color: transparent transparent transparent #fff; }
-  .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  /* vidéo zoomée ×2 : le jeu occupe le centre de l'enregistrement */
+  .video { background-size: 200% !important; }
+  .video iframe { position: absolute; left: -50%; top: -50%; width: 200%; height: 200%; border: 0; }
+  /* deux lancements : HD modernisée (rouge) ou Classique 1989 */
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
+  .mode { font: inherit; border: 0; border-radius: 12px; color: #fff; cursor: pointer; padding: 14px 12px; text-align: center; }
+  .mode b { display: block; font-size: 20px; font-weight: 900; font-style: italic; letter-spacing: .5px; text-transform: uppercase; }
+  .mode span { display: block; font-size: 13px; opacity: .9; margin-top: 2px; }
+  #playHd { background: linear-gradient(180deg, #f04a3a, #b8241a); box-shadow: 0 8px 24px rgba(227,57,43,.35); }
+  #playClassic { background: linear-gradient(180deg, #4b5a68, #2c3640); }
+  .mode:disabled { background: #39424c; box-shadow: none; cursor: default; color: #9aa6b2; }
   .win { display: flex; flex-direction: column; }
   .win p { color: var(--muted); font-size: 15px; margin: 0 0 12px; }
   .win ul { margin: 0 0 16px; padding-left: 20px; font-size: 15px; }
@@ -136,7 +146,10 @@
           <span class="state" id="stDisk"></span>
         </label>
         <input id="fileDisk" type="file" accept=".st,.ST">
-        <button id="play" disabled data-t="play">Play</button>
+        <div class="modes">
+          <button class="mode" id="playHd" disabled><b data-t="playHd">Play HD</b><span data-t="playHdSub">Modernised: scenery, textures, V8</span></button>
+          <button class="mode" id="playClassic" disabled><b data-t="playClassic">Classic</b><span data-t="playClassicSub">The 1989 original, as it was</span></button>
+        </div>
         <progress id="diskProgress" max="100" hidden></progress>
         <div id="status" role="status"></div>
         <p class="note" data-t="privacy">Your files stay in this browser: nothing is uploaded, and they are kept for your next visits. No game data is supplied with this page.</p>
@@ -204,7 +217,7 @@
     tagline: "Le classique Atari ST de Geoff Crammond (1989) dans votre navigateur — en HD, avec des courses en ligne.",
     ready: 'Préparez-vous', disk: 'Disquette Atari ST', required: 'obligatoire', 
     diskSub: 'Chargement automatique. Déposez une autre disquette ici ou cliquez.',
-    play: 'Jouer',
+    playHd: 'Jouer en HD', playHdSub: 'Modernisée : décor, textures, V8', playClassic: 'Classique', playClassicSub: "L'original de 1989, tel quel",
     privacy: "Vos fichiers restent dans ce navigateur : rien n'est envoyé, et ils sont gardés pour vos prochaines visites. Aucune donnée du jeu n'est fournie avec cette page.",
     keysTitle: 'Touches', kF1: '<b>Menu</b> – options : langue, son, HD, décor, touches, en ligne…',
     kF8: "<b>Ancien / nouveau</b> – bascule entre le jeu d'origine de 1989 et la nouvelle version HD",
@@ -276,7 +289,7 @@
 
     if (diskBusy) $('stDisk').textContent = '…';
     $('fileDisk').disabled = !ready || diskBusy;
-    $('play').disabled = !ready || !haveDisk || diskBusy;
+    $('playHd').disabled = $('playClassic').disabled = !ready || !haveDisk || diskBusy;
   }
 
   // joueurs en ligne : demandé au serveur relais par le jeu lui-même
@@ -422,7 +435,7 @@
   });
 
   // ---------------------------------------------------------------- lancement
-  async function start() {
+  async function start(mode) {
     if (!ready || !haveDisk || running || diskBusy) return;
     running = true;
     document.body.classList.add('playing');
@@ -430,12 +443,13 @@
     setInterval(save, 5000);                  // options changées dans le jeu (scr.ini)
     window.addEventListener('beforeunload', save);
     const hd = hdReady ? await hdReady : false;
-    const args = [DISK, '--ini', INI].concat(hd ? ['--hddir', '/hd'] : []);
+    const args = [DISK, '--ini', INI, mode === 'classic' ? '--classic' : '--modern'].concat(hd ? ['--hddir', '/hd'] : []);
     try { Module.callMain(args); } catch (e) { if (e !== 'unwind' && !(e && e.name === 'ExitStatus')) console.error(e); }
   }
-  $('play').addEventListener('click', start);
+  $('playHd').addEventListener('click', () => start('modern'));
+  $('playClassic').addEventListener('click', () => start('classic'));
   window.addEventListener('keydown', (e) => {
-    if (!running) { if (e.key === 'Enter') start(); return; }
+    if (!running) { if (e.key === 'Enter') start('modern'); return; }
     // touches du jeu que le navigateur garderait pour lui (F5 recharge la page, F1 aide, F11...)
     if (/^F\d+$/.test(e.key) || ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace'].includes(e.key)) e.preventDefault();
   }, true);
@@ -445,7 +459,7 @@
   $('video').addEventListener('click', function () {
     if (this.querySelector('iframe')) return;
     const f = document.createElement('iframe');
-    f.src = 'https://www.youtube-nocookie.com/embed/sL0vGRPCEpc?autoplay=1&rel=0';
+    f.src = 'https://www.youtube-nocookie.com/embed/sL0vGRPCEpc?autoplay=1&rel=0&controls=0&modestbranding=1&playsinline=1';
     f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; f.allowFullscreen = true; f.title = 'Stunt Car Racer';
     const player = document.createElement('div');
     player.id = this.id;
