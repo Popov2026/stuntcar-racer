@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stunt Car Racer – play in the browser</title>
-<meta name="description" content="Stunt Car Racer (Atari ST, 1989) in your browser: HD graphics and online multiplayer. Bring your own disk image.">
+<meta name="description" content="Stunt Car Racer (Atari ST, 1989) in your browser: HD graphics and online multiplayer. Automatic disk loading.">
 <style>
   /* page d'accueil de la version WebAssembly : présentation, joueurs en ligne, fichiers du joueur */
   :root {
@@ -58,6 +58,7 @@
           padding: 16px; border: 0; border-radius: 12px; color: #fff; cursor: pointer; margin-top: 6px;
           background: linear-gradient(180deg, #f04a3a, #b8241a); box-shadow: 0 8px 24px rgba(227,57,43,.35); }
   #play:disabled { background: #39424c; box-shadow: none; cursor: default; color: #9aa6b2; }
+  #diskProgress { width: 100%; height: 14px; accent-color: var(--accent); }
   .note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
   #status { color: var(--accent2); font-size: 14px; min-height: 1.3em; margin-top: 8px; }
 
@@ -128,12 +129,13 @@
         <label class="slot" id="slotDisk" for="fileDisk">
           <span class="icon">💾</span>
           <span class="txt"><span class="name"><span data-t="disk">Atari ST floppy disk</span> (.st)<span class="tag req" data-t="required">required</span></span><br>
-            <span class="sub" data-t="diskSub">Your own Stunt Car Racer disk image. Drop it here or click.</span></span>
+            <span class="sub" data-t="diskSub">Loads automatically. Drop another disk here or click.</span></span>
           <span class="state" id="stDisk"></span>
         </label>
         <input id="fileDisk" type="file" accept=".st,.ST">
         <button id="play" disabled data-t="play">Play</button>
-        <div id="status"></div>
+        <progress id="diskProgress" max="100" hidden></progress>
+        <div id="status" role="status"></div>
         <p class="note" data-t="privacy">Your files stay in this browser: nothing is uploaded, and they are kept for your next visits. No game data is supplied with this page.</p>
       </section>
 
@@ -198,7 +200,7 @@
     project: 'Projet', win: 'Version Windows',
     tagline: "Le classique Atari ST de Geoff Crammond (1989) dans votre navigateur — en HD, avec des courses en ligne.",
     ready: 'Préparez-vous', disk: 'Disquette Atari ST', required: 'obligatoire', 
-    diskSub: 'Votre propre image de la disquette Stunt Car Racer. Déposez-la ici ou cliquez.',
+    diskSub: 'Chargement automatique. Déposez une autre disquette ici ou cliquez.',
     play: 'Jouer',
     privacy: "Vos fichiers restent dans ce navigateur : rien n'est envoyé, et ils sont gardés pour vos prochaines visites. Aucune donnée du jeu n'est fournie avec cette page.",
     keysTitle: 'Touches', kF1: '<b>Menu</b> – options : langue, son, HD, décor, touches, en ligne…',
@@ -217,6 +219,10 @@
     online: (p, g) => p + (p > 1 ? ' joueurs' : ' joueur') + ' en ligne' + (g > 0 ? ' · ' + g + (g > 1 ? ' courses' : ' course') + ' en cours' : ''),
     offline: 'Serveur en ligne injoignable pour le moment',
     badDisk: "Ce fichier n'est pas une image de disquette Atari ST (.st).",
+    diskLoading: 'Téléchargement de la disquette…', diskReady: 'Disquette prête.',
+    diskError: 'Impossible de charger stuntcar.st. Vérifiez sa présence à côté de index.html ou sélectionnez une disquette.',
+    diskCached: 'Échec du téléchargement. La disquette enregistrée reste disponible.',
+    fileError: 'Impossible de préparer cette disquette.', engineError: 'Impossible de démarrer le moteur du jeu.',
     loadingGame: 'Chargement du jeu…', ended: 'Partie terminée. Rechargez la page pour rejouer.'
   };
   const EN = {
@@ -224,6 +230,10 @@
     online: (p, g) => p + (p === 1 ? ' player' : ' players') + ' online' + (g > 0 ? ' · ' + g + (g === 1 ? ' race' : ' races') + ' in progress' : ''),
     offline: 'Online server unreachable right now',
     badDisk: 'This file is not an Atari ST disk image (.st).',
+    diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
+    diskError: 'Could not load stuntcar.st. Check that it is next to index.html or select a disk.',
+    diskCached: 'Download failed. The saved disk is available.',
+    fileError: 'Could not prepare this disk.', engineError: 'Could not start the game engine.',
     loadingGame: 'Loading the game…', ended: 'The game has ended. Reload the page to play again.'
   };
   const base = {};
@@ -235,7 +245,19 @@
   // ---------------------------------------------------------------- état
   const DISK = '/save/game.st', INI = '/save/scr.ini';
   let ready = false, haveDisk = false, running = false, hdReady = null, online = null, statusKey = 'loadingGame';
-  function status(k) { statusKey = k; $('status').textContent = k ? T(k) : ''; }
+
+  let diskBusy = false, diskPercent = null;
+  function status(k) {
+    statusKey = k;
+    const progress = $('diskProgress');
+    progress.hidden = k !== 'diskLoading';
+    progress.setAttribute('aria-label', T('diskLoading'));
+    if (diskPercent === null) progress.removeAttribute('value');
+    else progress.value = diskPercent;
+    const suffix = k === 'diskLoading' && diskPercent !== null ? ' ' + diskPercent + '%' : '';
+    const message = k ? T(k) + suffix : '';
+    if ($('status').textContent !== message) $('status').textContent = message;
+  }
   function applyLang() {
     document.documentElement.lang = fr ? 'fr' : 'en';
     document.querySelectorAll('[data-t]').forEach((e) => { e.innerHTML = fr ? FR[e.dataset.t] : base[e.dataset.t]; });
@@ -248,7 +270,10 @@
   function refresh() {
     $('slotDisk').classList.toggle('ready', haveDisk);
     $('stDisk').textContent = haveDisk ? '✓ ' + T('ok') : T('missing');
-    $('play').disabled = !(ready && haveDisk);
+
+    if (diskBusy) $('stDisk').textContent = '…';
+    $('fileDisk').disabled = !ready || diskBusy;
+    $('play').disabled = !ready || !haveDisk || diskBusy;
   }
 
   // joueurs en ligne : demandé au serveur relais par le jeu lui-même
@@ -286,6 +311,7 @@
 
   var Module = {
     canvas: $('canvas'),
+    onAbort: () => status('engineError'),
     websocket: { subprotocol: 'null' },      // pas de sous-protocole : le serveur relais n'en choisit pas
     print: (t) => console.log(t),
     printErr: (t) => console.warn(t),
@@ -296,22 +322,94 @@
       FS.mount(IDBFS, {}, '/save');
       FS.syncfs(true, (err) => {
         if (err) console.warn('syncfs', err);
-        ready = true; status('');
+        ready = true;
         haveDisk = FS.analyzePath(DISK).exists;
-        refresh();
+        loadDisk();
       });
     },
     onExit: () => { running = false; save(); document.body.classList.remove('playing'); status('ended'); }
   };
 
   // ---------------------------------------------------------------- image disque du joueur
-  async function useFile(f) {
-    if (!f || !ready || running) return;
-    const d = new Uint8Array(await f.arrayBuffer());
-    if (d.length < 300000) { status('badDisk'); return; }
-    FS.writeFile(DISK, d); haveDisk = true;
-    status(''); save(); refresh();
+
+  async function loadDisk() {
+    diskBusy = true;
+    status('diskLoading');
+    refresh();
+    try {
+      const response = await fetch('./stuntcar.st');
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      if ((response.headers.get('Content-Type') || '').toLowerCase().includes('text/html')) {
+        throw new Error('Expected a disk image, received HTML');
+      }
+
+      const reader = response.body?.getReader();
+      let disk;
+      if (reader) {
+        const encoding = response.headers.get('Content-Encoding');
+        const length = Number(response.headers.get('Content-Length'));
+        const total = (!encoding || encoding.toLowerCase() === 'identity')
+          && Number.isSafeInteger(length) && length > 0 ? length : null;
+        const chunks = [];
+        let received = 0;
+        diskPercent = total === null ? null : 0;
+        status('diskLoading');
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.byteLength;
+            diskPercent = total && received <= total ? Math.floor(100 * received / total) : null;
+            status('diskLoading');
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        if (total !== null && received !== total) throw new Error('Unexpected disk size');
+        disk = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          disk.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+      } else {
+        disk = new Uint8Array(await response.arrayBuffer());
+      }
+      if (disk.length < 300000) throw new Error('Invalid disk image size');
+      FS.writeFile(DISK, disk);
+      haveDisk = true;
+      save();
+      status('diskReady');
+    } catch (e) {
+      console.warn('stuntcar.st', e);
+      status(haveDisk ? 'diskCached' : 'diskError');
+    } finally {
+      diskBusy = false;
+      refresh();
+    }
   }
+
+  async function useFile(f) {
+    if (!f || !ready || running || diskBusy) return;
+    diskBusy = true;
+    refresh();
+    try {
+      const disk = new Uint8Array(await f.arrayBuffer());
+      if (disk.length < 300000) { status('badDisk'); return; }
+      FS.writeFile(DISK, disk);
+      haveDisk = true;
+      save();
+      status('diskReady');
+    } catch (e) {
+      console.warn('disk image', e);
+      status('fileError');
+    } finally {
+      diskBusy = false;
+      refresh();
+    }
+  }
+
   $('fileDisk').addEventListener('change', (e) => useFile(e.target.files[0]));
   window.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dragging'); });
   window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
@@ -322,7 +420,7 @@
 
   // ---------------------------------------------------------------- lancement
   async function start() {
-    if (!ready || !haveDisk || running) return;
+    if (!ready || !haveDisk || running || diskBusy) return;
     running = true;
     document.body.classList.add('playing');
     $('canvas').focus();
@@ -352,6 +450,6 @@
   document.addEventListener('fullscreenchange', () => { if (running) $('canvas').focus(); });
   applyLang();
 </script>
-<script async src="scr.js"></script>
+<script async src="scr.js" onerror="status('engineError')"></script>
 </body>
 </html>
