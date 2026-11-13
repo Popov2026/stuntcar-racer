@@ -223,6 +223,8 @@
     offline: 'Serveur en ligne injoignable pour le moment',
     badDisk: "Ce fichier n'est pas une image de disquette Atari ST (.st).",
     diskBoot: 'Lecture de la disquette…',
+    launchReady: 'Disquette lue. Cliquez sur Jouer pour lancer le jeu.',
+    launchError: 'Le jeu n’a pas démarré. Rechargez la page et réessayez.',
     diskLoading: 'Téléchargement de la disquette…', diskReady: 'Disquette prête.',
     diskError: 'Impossible de charger stuntcar.st. Vérifiez sa présence à côté de index.html ou sélectionnez une disquette.',
     diskCached: 'Échec du téléchargement. La disquette enregistrée reste disponible.',
@@ -235,6 +237,8 @@
     offline: 'Online server unreachable right now',
     badDisk: 'This file is not an Atari ST disk image (.st).',
     diskBoot: 'Reading the disk…',
+    launchReady: 'Disk read. Click Play to start the game.',
+    launchError: 'The game did not start. Reload the page and try again.',
     diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
     diskError: 'Could not load stuntcar.st. Check that it is next to index.html or select a disk.',
     diskCached: 'Download failed. The saved disk is available.',
@@ -251,7 +255,8 @@
   const DISK = '/save/game.st', INI = '/save/scr.ini';
   let ready = false, haveDisk = false, running = false, hdReady = null, online = null, statusKey = 'loadingGame';
 
-  let diskBusy = false, diskPercent = null;
+  let diskBusy = false, diskPercent = null, diskRead = false, launchFailed = false;
+  let hdLoaded = false;
   function status(k) {
     statusKey = k;
     const progress = $('diskProgress');
@@ -278,7 +283,7 @@
 
     if (diskBusy) $('stDisk').textContent = '…';
     $('fileDisk').disabled = !ready || diskBusy;
-    $('play').disabled = !ready || !haveDisk || diskBusy;
+    $('play').disabled = !ready || !haveDisk || diskBusy || launchFailed;
   }
 
   // joueurs en ligne : demandé au serveur relais par le jeu lui-même
@@ -322,6 +327,7 @@
     printErr: (t) => console.warn(t),
     onRuntimeInitialized: () => {
       loadHd();
+      hdReady.then((loaded) => { hdLoaded = loaded; });
       probeOnline(); setInterval(probeOnline, 20000);
       FS.mkdir('/save');
       FS.mount(IDBFS, {}, '/save');
@@ -405,6 +411,7 @@
       FS.writeFile(DISK, disk);
       haveDisk = true;
       save();
+      diskRead = false;
       status('diskReady');
     } catch (e) {
       console.warn('disk image', e);
@@ -470,25 +477,38 @@
     });
     diskBusy = false;
     diskPercent = null;
-    status('');
+    diskRead = true;
+    status('launchReady');
     refresh();
   }
 
-  async function start() {
-    if (!ready || !haveDisk || running || diskBusy) return;
-    await simulateDiskRead();
+  function start() {
+    if (!ready || !haveDisk || running || diskBusy || launchFailed) return;
+    if (!diskRead) {
+      simulateDiskRead();
+      return;
+    }
     running = true;
     document.body.classList.add('playing');
     $('canvas').focus();
     setInterval(save, 5000);                  // options changées dans le jeu (scr.ini)
     window.addEventListener('beforeunload', save);
-    const hd = hdReady ? await hdReady : false;
-    const args = [DISK, '--ini', INI].concat(hd ? ['--hddir', '/hd'] : []);
-    try { Module.callMain(args); } catch (e) { if (e !== 'unwind' && !(e && e.name === 'ExitStatus')) console.error(e); }
+    const args = [DISK, '--ini', INI].concat(hdLoaded ? ['--hddir', '/hd'] : []);
+    try {
+      Module.callMain(args);
+    } catch (e) {
+      if (e === 'unwind' || (e && e.name === 'ExitStatus')) return;
+      console.error(e);
+      running = false;
+      launchFailed = true;
+      document.body.classList.remove('playing');
+      status('launchError');
+      refresh();
+    }
   }
   $('play').addEventListener('click', start);
   window.addEventListener('keydown', (e) => {
-    if (!running) { if (e.key === 'Enter') start(); return; }
+    if (!running) { if (e.key === 'Enter' && !e.repeat && e.target !== $('play')) start(); return; }
     // touches du jeu que le navigateur garderait pour lui (F5 recharge la page, F1 aide, F11...)
     if (/^F\d+$/.test(e.key) || ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace'].includes(e.key)) e.preventDefault();
   }, true);
