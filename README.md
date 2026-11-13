@@ -5,6 +5,9 @@
 Projet de décompilation de **Stunt Car Racer** (Geoff Crammond, Micro Style, 1989),
 version **Atari ST**, et réplique jouable sur PC dont tous les réglages sont modifiables.
 
+Merci à **Geoff Crammond** (programme et conception) et à **John Cumming** (graphismes
+additionnels de la version Atari ST) pour ce jeu et tous ces souvenirs.
+
 > **Aucune donnée du jeu n'est incluse dans ce dépôt.** Les outils et la réplique lisent
 > les circuits directement depuis **votre** image disque (`.st`). Sans disquette, la
 > réplique propose des circuits de démonstration originaux.
@@ -13,6 +16,9 @@ version **Atari ST**, et réplique jouable sur PC dont tous les réglages sont m
 
 **Stunt Car Racer** (Geoff Crammond, Micro Style, 1989), **Atari ST** version: reverse
 engineering project and a PC version whose settings can all be changed.
+
+Thanks to **Geoff Crammond** (program and design) and **John Cumming** (additional graphics of the
+Atari ST version) for this game and all those memories.
 
 > **No game data is included in this repository.** The tools and the PC version read the
 > tracks directly from **your own** disk image (`.st`).
