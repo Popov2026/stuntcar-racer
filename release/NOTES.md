@@ -1,7 +1,8 @@
-## Stunt Car Racer v92
+## Stunt Car Racer v93
 
 **Français**
-- Nouveau en v92 : la version navigateur démarre de nouveau (bloquée en v91). Options de lancement --classic (le jeu de 1989 tel quel) et --modern (version HD avec décor, textures, V8 et foule).
+- Nouveau en v93 : lancement « Classique » (--classic) : le look de 1989 en haute résolution fluide, sans textures, sans décor ajouté ni ciel ; bouton Classique de la version navigateur.
+- v92 : la version navigateur démarre de nouveau (bloquée en v91). Options de lancement --classic (le jeu de 1989 tel quel) et --modern (version HD avec décor, textures, V8 et foule).
 - v91 : le menu « 4. Load/Save/Replay » de la saison marche : la disquette de sauvegarde est le fichier scr_saves.dat, à côté de scr.ini (dans le navigateur : gardé par la page). Quand le jeu demande la disquette de sauvegarde, appuyez sur une touche.
 - v90 : vrai son de foule (foule.wav) livré dans le dossier hd et utilisé par la version navigateur. Version navigateur : plus d'option réseau local (le 3e choix du menu de départ est « Online Multiplayer ») ni de circuits TNT.
 - v89 : version navigateur, le plein écran (F11, menu F1 ou bouton de la page) montre l'image entière, et Échap revient correctement à la page (avant, on ne voyait plus que la moitié du jeu).
@@ -26,7 +27,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v92: the browser version starts again (blocked in v91). Launch options --classic (the 1989 game as it was) and --modern (HD version with scenery, textures, V8 and crowd).
+- New in v93: "Classic" launch (--classic): the 1989 look in smooth high resolution, without textures, added scenery or sky; Classic button in the browser version.
+- v92: the browser version starts again (blocked in v91). Launch options --classic (the 1989 game as it was) and --modern (HD version with scenery, textures, V8 and crowd).
 - v91: the season's "4. Load/Save/Replay" menu works: the save disk is the file scr_saves.dat, next to scr.ini (in the browser: kept by the page). When the game asks for the save disk, press a key.
 - v90: real crowd sound (foule.wav) in the hd folder, also used by the browser version. Browser version: no more local network option (the 3rd choice of the start menu is “Online Multiplayer”) and no TNT tracks.
 - v89: browser version, full screen (F11, F1 menu or the page's button) shows the whole picture, and Esc goes back to the page properly (before, only half of the game was visible).
