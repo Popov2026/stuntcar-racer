@@ -279,7 +279,7 @@
     tagline: "Le classique Atari ST de Geoff Crammond (1989) dans votre navigateur — en HD, avec des courses en ligne.",
     ready: 'Préparez-vous', disk: 'Disquette Atari ST', required: 'obligatoire', 
     diskSub: 'Votre propre image de la disquette Stunt Car Racer : déposez-la ici ou cliquez. Ou entrez votre code de licence ci-dessous.',
-    licBtn: 'Charger avec le code', licBad: 'Code de licence incorrect.', needDisk: 'Ajoutez votre disquette ou entrez un code de licence.',
+    licBtn: 'Charger avec le code', licBad: 'Code de licence incorrect.', noEnc: "Pas encore de disquette chiffrée sur ce site (stuntcar.st.enc absent).", needDisk: 'Ajoutez votre disquette ou entrez un code de licence.',
     playHd: 'Jouer en HD', playHdSub: 'Modernisée : décor, textures, V8', playClassic: 'Classique', playClassicSub: 'Le look 1989 en haute résolution, sans ajouts',
     privacy: "Vos fichiers restent dans ce navigateur : rien n'est envoyé, et ils sont gardés pour vos prochaines visites. Aucune donnée du jeu n'est fournie avec cette page.",
     keysTitle: 'Touches', kF1: '<b>Menu</b> – options : langue, son, HD, décor, touches, en ligne…',
@@ -315,7 +315,7 @@
     badDisk: 'This file is not an Atari ST disk image (.st).',
     diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
     diskError: 'Could not load the disk. Try again or add your own disk.',
-    licBad: 'Wrong licence code.', needDisk: 'Add your disk or enter a licence code.',
+    licBad: 'Wrong licence code.', noEnc: 'No encrypted disk on this site yet (stuntcar.st.enc missing).', needDisk: 'Add your disk or enter a licence code.',
     diskCached: 'Download failed. The saved disk is available.',
     fileError: 'Could not prepare this disk.', engineError: 'Could not start the game engine.',
     loadingGame: 'Loading the game…', ended: 'The game has ended. Reload the page to play again.'
@@ -428,6 +428,7 @@
     refresh();
     try {
       const response = await fetch('./stuntcar.st.enc', { cache: 'no-store' });
+      if (response.status === 404) { status('noEnc'); return; }
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const buf = new Uint8Array(await response.arrayBuffer());
       if (buf.length < 6 || new TextDecoder().decode(buf.subarray(0, 5)) !== 'SCRE2') throw new Error('format');
