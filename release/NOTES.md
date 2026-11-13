@@ -1,7 +1,8 @@
-## Stunt Car Racer v90
+## Stunt Car Racer v91
 
 **Français**
-- Nouveau en v90 : vrai son de foule (foule.wav) livré dans le dossier hd et utilisé par la version navigateur. Version navigateur : plus d'option réseau local (le 3e choix du menu de départ est « Online Multiplayer ») ni de circuits TNT.
+- Nouveau en v91 : le menu « 4. Load/Save/Replay » de la saison marche : la disquette de sauvegarde est le fichier scr_saves.dat, à côté de scr.ini (dans le navigateur : gardé par la page). Quand le jeu demande la disquette de sauvegarde, appuyez sur une touche.
+- v90 : vrai son de foule (foule.wav) livré dans le dossier hd et utilisé par la version navigateur. Version navigateur : plus d'option réseau local (le 3e choix du menu de départ est « Online Multiplayer ») ni de circuits TNT.
 - v89 : version navigateur, le plein écran (F11, menu F1 ou bouton de la page) montre l'image entière, et Échap revient correctement à la page (avant, on ne voyait plus que la moitié du jeu).
 - v88 : page d'accueil de la version navigateur (https://popov2026.github.io/stuntcar-racer/play/) : nombre de joueurs en ligne sur le serveur, disquette ST à fournir, fichier TNT facultatif pour The New Tracks, touches F1 (menu) et F8 (ancien / nouveau).
 - v87 : les images HD (cockpit, moteur, flammes, roues, grue) sont livrées dans le dossier hd du jeu et chargées par la version navigateur.
@@ -24,7 +25,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v90: real crowd sound (foule.wav) in the hd folder, also used by the browser version. Browser version: no more local network option (the 3rd choice of the start menu is “Online Multiplayer”) and no TNT tracks.
+- New in v91: the season's "4. Load/Save/Replay" menu works: the save disk is the file scr_saves.dat, next to scr.ini (in the browser: kept by the page). When the game asks for the save disk, press a key.
+- v90: real crowd sound (foule.wav) in the hd folder, also used by the browser version. Browser version: no more local network option (the 3rd choice of the start menu is “Online Multiplayer”) and no TNT tracks.
 - v89: browser version, full screen (F11, F1 menu or the page's button) shows the whole picture, and Esc goes back to the page properly (before, only half of the game was visible).
 - v88: welcome page for the browser version (https://popov2026.github.io/stuntcar-racer/play/): number of players online on the server, ST disk to provide, optional TNT file for The New Tracks, F1 (menu) and F8 (old / new) keys.
 - v87: the HD images (cockpit, engine, flames, wheels, crane) come in the game's hd folder and are loaded by the browser version.
