@@ -62,6 +62,7 @@
   .lic button { font: inherit; font-weight: 700; font-size: 14px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);
                 background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
   .lic button:disabled { opacity: .5; cursor: default; }
+  @media (max-width: 560px) { .lic { flex-wrap: wrap; } .lic input { flex-basis: 100%; order: 1; } .lic .icon { display: none; } .lic button { order: 2; flex: 1; } }
   #play { width: 100%; font: inherit; font-size: 22px; font-weight: 900; font-style: italic; letter-spacing: .5px; text-transform: uppercase;
           padding: 16px; border: 0; border-radius: 12px; color: #fff; cursor: pointer; margin-top: 6px;
           background: linear-gradient(180deg, #f04a3a, #b8241a); box-shadow: 0 8px 24px rgba(227,57,43,.35); }
@@ -182,7 +183,8 @@
         <input id="fileDisk" type="file" accept=".st,.ST">
         <form class="lic" id="licForm" autocomplete="off">
           <span class="icon">🔑</span>
-          <input id="licCode" type="text" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" aria-label="Licence code">
+          <input id="licCode" type="text" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" aria-label="Licence code">
+          <button id="licPaste" type="button" data-t="licPaste" title="Paste">📋 Paste</button>
           <button id="licBtn" type="submit" data-t="licBtn">Load with licence code</button>
         </form>
         <div class="modes">
@@ -279,7 +281,7 @@
     tagline: "Le classique Atari ST de Geoff Crammond (1989) dans votre navigateur — en HD, avec des courses en ligne.",
     ready: 'Préparez-vous', disk: 'Disquette Atari ST', required: 'obligatoire', 
     diskSub: 'Votre propre image de la disquette Stunt Car Racer : déposez-la ici ou cliquez. Ou entrez votre code de licence ci-dessous.',
-    licBtn: 'Charger avec le code', licBad: 'Code de licence incorrect.', noEnc: "Pas encore de disquette chiffrée sur ce site (stuntcar.st.enc absent).", needDisk: 'Ajoutez votre disquette ou entrez un code de licence.',
+    licBtn: 'Charger avec le code', licPaste: '📋 Coller', pasteErr: 'Collage refusé par le navigateur : utilisez Ctrl+V dans la case.', licBad: 'Code de licence incorrect.', noEnc: "Pas encore de disquette chiffrée sur ce site (stuntcar.st.enc absent).", needDisk: 'Ajoutez votre disquette ou entrez un code de licence.',
     playHd: 'Jouer en HD', playHdSub: 'Modernisée : décor, textures, V8', playClassic: 'Classique', playClassicSub: 'Le look 1989 en haute résolution, sans ajouts',
     privacy: "Vos fichiers restent dans ce navigateur : rien n'est envoyé, et ils sont gardés pour vos prochaines visites. Aucune donnée du jeu n'est fournie avec cette page.",
     keysTitle: 'Touches', kF1: '<b>Menu</b> – options : langue, son, HD, décor, touches, en ligne…',
@@ -315,7 +317,7 @@
     badDisk: 'This file is not an Atari ST disk image (.st).',
     diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
     diskError: 'Could not load the disk. Try again or add your own disk.',
-    licBad: 'Wrong licence code.', noEnc: 'No encrypted disk on this site yet (stuntcar.st.enc missing).', needDisk: 'Add your disk or enter a licence code.',
+    licBad: 'Wrong licence code.', pasteErr: 'The browser refused to paste: use Ctrl+V in the box.', noEnc: 'No encrypted disk on this site yet (stuntcar.st.enc missing).', needDisk: 'Add your disk or enter a licence code.',
     diskCached: 'Download failed. The saved disk is available.',
     fileError: 'Could not prepare this disk.', engineError: 'Could not start the game engine.',
     loadingGame: 'Loading the game…', ended: 'The game has ended. Reload the page to play again.'
@@ -357,7 +359,7 @@
 
     if (diskBusy) $('stDisk').textContent = '…';
     $('fileDisk').disabled = !ready || diskBusy;
-    $('licBtn').disabled = !ready || diskBusy;
+    $('licBtn').disabled = $('licPaste').disabled = !ready || diskBusy;
     $('playHd').disabled = $('playClassic').disabled = !ready || !haveDisk || diskBusy;
   }
 
@@ -466,6 +468,26 @@
       refresh();
     }
   }
+  // code tapé ou collé : majuscules, lettres et chiffres seulement, tiret automatique tous les 4 caractères
+  function formatCode(v) {
+    const c = String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20);
+    return c.replace(/(.{4})(?=.)/g, '$1-');
+  }
+  $('licCode').addEventListener('input', (e) => {
+    const el = e.target, before = el.value.slice(0, el.selectionStart).replace(/[^A-Za-z0-9]/g, '').length;
+    el.value = formatCode(el.value);
+    let pos = 0, n = 0;   // curseur remis après le même nombre de lettres et chiffres
+    while (pos < el.value.length && n < before) { if (el.value[pos] !== '-') n++; pos++; }
+    el.setSelectionRange(pos, pos);
+  });
+  $('licPaste').addEventListener('click', async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      $('licCode').value = formatCode(t);
+      if ($('licCode').value.length === 24 && ready && !running && !diskBusy) loadDisk($('licCode').value);   // code complet : chargé tout de suite
+      else $('licCode').focus();
+    } catch (e) { status('pasteErr'); $('licCode').focus(); }
+  });
   $('licForm').addEventListener('submit', (e) => { e.preventDefault(); if (ready && !running && !diskBusy) loadDisk($('licCode').value); });
 
   async function useFile(f) {
