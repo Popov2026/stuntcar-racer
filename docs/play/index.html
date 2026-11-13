@@ -418,8 +418,8 @@
 
   // ---------------------------------------------------------------- image disque du joueur
 
-  // disquette chiffrée (stuntcar.st.enc) : inutilisable sans le code de licence, déchiffrée ici
-  // (PBKDF2-SHA256 250 000 tours + AES-256-GCM ; voir native/tools/encrypt_disk.mjs)
+  // disquette chiffrée (stuntcar.st.enc) : inutilisable sans un des codes de licence, déchiffrée ici
+  // (clé de données AES-256-GCM enveloppée par code avec PBKDF2-SHA256 ; voir native/tools/encrypt_disk.mjs)
   async function loadDisk(code) {
     const norm = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (norm.length < 16) { status('licBad'); return; }
@@ -430,18 +430,33 @@
       const response = await fetch('./stuntcar.st.enc', { cache: 'no-store' });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const buf = new Uint8Array(await response.arrayBuffer());
-      if (buf.length < 33 || new TextDecoder().decode(buf.subarray(0, 5)) !== 'SCRE1') throw new Error('format');
-      const salt = buf.subarray(5, 21), iv = buf.subarray(21, 33);
+      if (buf.length < 6 || new TextDecoder().decode(buf.subarray(0, 5)) !== 'SCRE2') throw new Error('format');
+      const count = buf[5], body = 6 + count * 76;
+      if (buf.length < body + 12) throw new Error('format');
       const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(norm), 'PBKDF2', false, ['deriveKey']);
-      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base,
-        { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-      let disk;
-      try { disk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, buf.subarray(33))); }
-      catch (e) { status('licBad'); return; }
+      let raw = null;
+      for (let k = 0; k < count && !raw; k++) {   // une enveloppe par code : on essaie chacune
+        const o = 6 + k * 76;
+        const kek = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: buf.subarray(o, o + 16), iterations: 250000, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+        try { raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.subarray(o + 16, o + 28) }, kek, buf.subarray(o + 28, o + 76)); } catch (e) {}
+      }
+      if (!raw) { status('licBad'); return; }
+      const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+      const disk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.subarray(body, body + 12) }, key, buf.subarray(body + 12)));
       FS.writeFile(DISK, disk);
       haveDisk = true;
       save();
       status('diskReady');
+      // le serveur relais note quel code a servi (empreinte du code, jamais le code lui-même)
+      try {
+        const fp = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('SCR-LIC:' + norm))))
+          .map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+        Module.ccall('scr_web_licence', null, ['string'], [fp]);
+        const t0 = Date.now(), poll = setInterval(() => {
+          if (Module.ccall('scr_web_licence_sent', 'number', [], []) !== 0 || Date.now() - t0 > 15000) clearInterval(poll);
+        }, 250);
+      } catch (e) { console.warn('licence', e); }
     } catch (e) {
       console.warn('stuntcar.st.enc', e);
       status('diskError');
