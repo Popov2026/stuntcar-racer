@@ -55,6 +55,7 @@
   .tag.opt { background: rgba(255,176,32,.15); color: var(--accent2); }
   .slot.trkslot { padding: 10px 14px; }
   .trkslot .rm { display: block; color: var(--muted); font-size: 13px; font-weight: 400; text-decoration: underline; cursor: pointer; }
+  .edlink { margin: -4px 0 12px; } .edlink a { font-weight: 700; color: var(--accent2); }
   .tag.req { background: rgba(227,57,43,.18); color: #ff8a80; }
   input[type=file] { display: none; }
   /* code de licence : chargement automatique de la disquette (accès accordé par l'auteur du projet) */
@@ -217,6 +218,7 @@
           <span class="state" id="stTrk"></span>
         </label>
         <input id="fileTrk" type="file" accept=".trk,.TRK">
+        <p class="note edlink"><a href="editor.html" data-t="edLink">✏️ Circuit editor: create and modify your circuits</a></p>
         <form class="lic" id="licForm" autocomplete="off">
           <span class="icon">🔑</span>
           <input id="licCode" type="text" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" aria-label="Licence code">
@@ -346,6 +348,7 @@
     winList: '<li>Full HD 1920×1080 avec rendu OpenGL</li><li>The New Tracks (TNT) : 8 circuits en plus</li><li>Courses en réseau local</li><li>Votre propre serveur relais</li>',
     winBtn: 'Télécharger pour Windows',
     thxTitle: 'Merci, Geoff Crammond',
+    edLink: '✏️ Éditeur de circuits : créez et modifiez vos circuits',
     trkName: 'Mes circuits', optional: 'facultatif', trkSub: "Vos propres circuits, faits avec l'éditeur de circuits. F7 passe des circuits d'origine aux vôtres.",
     trkNone: 'Aucun', trkReady: 'Prêts', trkRemove: 'retirer', trkBad: "Ce fichier n'est pas un fichier de circuits (.trk).", trkSaved: 'Circuits personnels prêts : ils seront chargés au lancement (F7 pour changer).',
     revTitle: 'Avis des joueurs', revLoading: 'Chargement des avis…', revStars: 'Votre note', revNameL: 'Nom', revSend: 'Envoyer',
