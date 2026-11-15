@@ -1,7 +1,8 @@
-## Stunt Car Racer v101
+## Stunt Car Racer v102
 
 **Français**
-- Nouveau en v101 : le jeu reconnaît les autres copies Atari ST de Stunt Car Racer : programme GAME.PUT, STUNTCAR.PRG, STUNT.PRG ou STUNTCAR.EXE, compressé ByteKiller ou Pack-Ice, ou pas (8 copies différentes testées, toutes jouables et compatibles entre elles en multijoueur).
+- Nouveau en v102 : avis des joueurs sur la page web (1 à 5 étoiles, nom, commentaire de 100 caractères) ; chaque avis est validé dans la page /admin du serveur relais avant d'être publié (scr_avis.txt).
+- v101 : le jeu reconnaît les autres copies Atari ST de Stunt Car Racer : programme GAME.PUT, STUNTCAR.PRG, STUNT.PRG ou STUNTCAR.EXE, compressé ByteKiller ou Pack-Ice, ou pas (8 copies différentes testées, toutes jouables et compatibles entre elles en multijoueur).
 - v100 : multijoueur : sonnerie quand un joueur arrive dans votre salle, rejoint la course ou quand un adversaire est trouvé (menu F1, « Sonnerie quand un joueur arrive », activée par défaut). Disquette : toute copie de Stunt Car Racer de la version reconnue est acceptée (contrôle du code du jeu aux endroits utilisés au lieu du CRC de toute l'image), et deux copies différentes peuvent jouer ensemble. Version navigateur : les .zip contenant l'image .st sont acceptés, et une disquette refusée n'est plus gardée (la page ne reste plus bloquée).
 - v99 : DRAW BRIDGE en HD : le pont-levis monte et descend de nouveau comme dans le jeu d'origine (la géométrie HD suit les données du circuit que le jeu modifie en mémoire ; avant, la rampe restait basse et fixe).
 - v98 : voitures adverses texturées (détails élevés) : les deux flancs sont dessinés, avec une vitre latérale de chaque côté ; on ne voit plus le moteur ni le pare-brise à travers la carrosserie (version Windows et navigateur).
@@ -35,7 +36,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v101: the game recognises the other Atari ST copies of Stunt Car Racer: GAME.PUT, STUNTCAR.PRG, STUNT.PRG or STUNTCAR.EXE program, ByteKiller or Pack-Ice packed, or not (8 different copies tested, all playable and compatible with each other online).
+- New in v102: players' reviews on the web page (1 to 5 stars, name, 100-character comment); each review is approved in the relay server's /admin page before being published (scr_avis.txt).
+- v101: the game recognises the other Atari ST copies of Stunt Car Racer: GAME.PUT, STUNTCAR.PRG, STUNT.PRG or STUNTCAR.EXE program, ByteKiller or Pack-Ice packed, or not (8 different copies tested, all playable and compatible with each other online).
 - v100: multiplayer: chime when a player arrives in your room, joins the race or when an opponent is found (F1 menu, "Chime when a player arrives", on by default). Disk: any copy of Stunt Car Racer of the recognised version is accepted (check of the game code where it is used instead of a CRC of the whole image), and two different copies can play together. Browser version: .zip files containing the .st image are accepted, and a refused disk is no longer kept (the page no longer stays stuck).
 - v99: DRAW BRIDGE in HD: the drawbridge goes up and down again as in the original game (the HD geometry follows the track data the game changes in memory; before, the ramp stayed low and fixed).
 - v98: textured opponent cars (high detail): both sides are drawn, with a side window on each side; the engine and windscreen no longer show through the body (Windows and browser versions).
