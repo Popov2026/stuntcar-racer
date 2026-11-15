@@ -1,7 +1,8 @@
-## Stunt Car Racer v99
+## Stunt Car Racer v100
 
 **Français**
-- Nouveau en v99 : DRAW BRIDGE en HD : le pont-levis monte et descend de nouveau comme dans le jeu d'origine (la géométrie HD suit les données du circuit que le jeu modifie en mémoire ; avant, la rampe restait basse et fixe).
+- Nouveau en v100 : multijoueur : sonnerie quand un joueur arrive dans votre salle, rejoint la course ou quand un adversaire est trouvé (menu F1, « Sonnerie quand un joueur arrive », activée par défaut). Disquette : toute copie de Stunt Car Racer de la version reconnue est acceptée (contrôle du code du jeu aux endroits utilisés au lieu du CRC de toute l'image), et deux copies différentes peuvent jouer ensemble. Version navigateur : les .zip contenant l'image .st sont acceptés, et une disquette refusée n'est plus gardée (la page ne reste plus bloquée).
+- v99 : DRAW BRIDGE en HD : le pont-levis monte et descend de nouveau comme dans le jeu d'origine (la géométrie HD suit les données du circuit que le jeu modifie en mémoire ; avant, la rampe restait basse et fixe).
 - v98 : voitures adverses texturées (détails élevés) : les deux flancs sont dessinés, avec une vitre latérale de chaque côté ; on ne voit plus le moteur ni le pare-brise à travers la carrosserie (version Windows et navigateur).
 - v97 : serveur relais : page d'administration /admin protégée par mot de passe (ligne « admin = ... » de scr_relay.ini) : codes de licence utilisés (quand, combien de fois, depuis quelle adresse), joueurs avec leur adresse et ce qu'ils font, robots refusés, adresses bloquées et journal. 3 mots de passe faux bloquent l'adresse 1 h.
 - v96 : version navigateur : plusieurs codes de licence peuvent charger la disquette chiffrée ; le serveur relais note dans son journal quel code a servi (lignes « licence = NOM EMPREINTE » de scr_relay.ini, données par native/tools/encrypt_disk.mjs).
@@ -33,7 +34,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v99: DRAW BRIDGE in HD: the drawbridge goes up and down again as in the original game (the HD geometry follows the track data the game changes in memory; before, the ramp stayed low and fixed).
+- New in v100: multiplayer: chime when a player arrives in your room, joins the race or when an opponent is found (F1 menu, "Chime when a player arrives", on by default). Disk: any copy of Stunt Car Racer of the recognised version is accepted (check of the game code where it is used instead of a CRC of the whole image), and two different copies can play together. Browser version: .zip files containing the .st image are accepted, and a refused disk is no longer kept (the page no longer stays stuck).
+- v99: DRAW BRIDGE in HD: the drawbridge goes up and down again as in the original game (the HD geometry follows the track data the game changes in memory; before, the ramp stayed low and fixed).
 - v98: textured opponent cars (high detail): both sides are drawn, with a side window on each side; the engine and windscreen no longer show through the body (Windows and browser versions).
 - v97: relay server: password-protected /admin page ("admin = ..." line in scr_relay.ini): licence codes used (when, how often, from which address), players with their address and what they are doing, refused bots, blocked addresses and the log. 3 wrong passwords block the address for 1 h.
 - v96: browser version: several licence codes can load the encrypted disk; the relay server logs which code was used ("licence = NAME FINGERPRINT" lines in scr_relay.ini, given by native/tools/encrypt_disk.mjs).

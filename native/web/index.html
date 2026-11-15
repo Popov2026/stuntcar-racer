@@ -178,10 +178,10 @@
         <label class="slot" id="slotDisk" for="fileDisk">
           <span class="icon">💾</span>
           <span class="txt"><span class="name"><span data-t="disk">Atari ST floppy disk</span> (.st)<span class="tag req" data-t="required">required</span></span><br>
-            <span class="sub" data-t="diskSub">Your own Stunt Car Racer disk image: drop it here or click. Or enter your licence code below.</span></span>
+            <span class="sub" data-t="diskSub">Your own Stunt Car Racer disk image: drop it here or click. Or enter your licence code below. .zip files are accepted.</span></span>
           <span class="state" id="stDisk"></span>
         </label>
-        <input id="fileDisk" type="file" accept=".st,.ST">
+        <input id="fileDisk" type="file" accept=".st,.ST,.zip,.ZIP">
         <form class="lic" id="licForm" autocomplete="off">
           <span class="icon">🔑</span>
           <input id="licCode" type="text" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" aria-label="Licence code">
@@ -282,7 +282,7 @@
     project: 'Projet', win: 'Version Windows',
     tagline: "Le classique Atari ST de Geoff Crammond (1989) dans votre navigateur — en HD, avec des courses en ligne.",
     ready: 'Préparez-vous', disk: 'Disquette Atari ST', required: 'obligatoire', 
-    diskSub: 'Votre propre image de la disquette Stunt Car Racer : déposez-la ici ou cliquez. Ou entrez votre code de licence ci-dessous.',
+    diskSub: 'Votre propre image de la disquette Stunt Car Racer : déposez-la ici ou cliquez. Ou entrez votre code de licence ci-dessous. Les .zip sont acceptés.',
     licBtn: 'Charger avec le code', licPaste: '📋 Coller', pasteErr: 'Collage refusé par le navigateur : utilisez Ctrl+V dans la case.', licBad: 'Code de licence incorrect.', noEnc: "Pas encore de disquette chiffrée sur ce site (stuntcar.st.enc absent).", needDisk: 'Ajoutez votre disquette ou entrez un code de licence.',
     playHd: 'Jouer en HD', playHdSub: 'Modernisée : décor, textures, V8', playClassic: 'Classique', playClassicSub: 'Le look 1989 en haute résolution, sans ajouts',
     privacy: "Vos fichiers restent dans ce navigateur : rien n'est envoyé, et ils sont gardés pour vos prochaines visites. Aucune donnée du jeu n'est fournie avec cette page.",
@@ -306,7 +306,8 @@
     ok: 'Prête', missing: 'Manquante', checking: 'Test du serveur en ligne…',
     online: (p, g) => p + (p > 1 ? ' joueurs' : ' joueur') + ' en ligne' + (g > 0 ? ' · ' + g + (g > 1 ? ' courses' : ' course') + ' en cours' : ''),
     offline: 'Serveur en ligne injoignable pour le moment',
-    badDisk: "Ce fichier n'est pas une image de disquette Atari ST (.st).",
+    badDisk: "Ce fichier n'est pas une image de disquette Atari ST (.st, ou .zip qui en contient une).",
+    diskRefused: "Disquette refusée : ce n'est pas la version de Stunt Car Racer reconnue par le jeu.",
     diskLoading: 'Téléchargement de la disquette…', diskReady: 'Disquette prête.',
     diskError: 'Chargement impossible. Réessayez ou ajoutez votre disquette.',
     diskCached: 'Échec du téléchargement. La disquette enregistrée reste disponible.',
@@ -317,7 +318,8 @@
     ok: 'Ready', missing: 'Missing', checking: 'Checking the online server…',
     online: (p, g) => p + (p === 1 ? ' player' : ' players') + ' online' + (g > 0 ? ' · ' + g + (g === 1 ? ' race' : ' races') + ' in progress' : ''),
     offline: 'Online server unreachable right now',
-    badDisk: 'This file is not an Atari ST disk image (.st).',
+    badDisk: 'This file is not an Atari ST disk image (.st, or a .zip containing one).',
+    diskRefused: 'Disk refused: this is not the Stunt Car Racer version the game recognises.',
     diskLoading: 'Downloading the disk…', diskReady: 'Disk ready.',
     diskError: 'Could not load the disk. Try again or add your own disk.',
     licBad: 'Wrong licence code.', pasteErr: 'The browser refused to paste: use Ctrl+V in the box.', noEnc: 'No encrypted disk on this site yet (stuntcar.st.enc missing).', needDisk: 'Add your disk or enter a licence code.',
@@ -414,6 +416,7 @@
         if (err) console.warn('syncfs', err);
         ready = true;
         haveDisk = FS.analyzePath(DISK).exists;
+        if (haveDisk) { try { if (!Module.ccall('scr_check_disk', 'number', ['string'], [DISK])) { FS.unlink(DISK); haveDisk = false; save(); } } catch (e) {} }
         status(haveDisk ? '' : 'needDisk');
         refresh();
       });
@@ -450,9 +453,7 @@
       if (!raw) { status('licBad'); return; }
       const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
       const disk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.subarray(body, body + 12) }, key, buf.subarray(body + 12)));
-      FS.writeFile(DISK, disk);
-      haveDisk = true;
-      save();
+      if (!keepDisk(disk)) return;
       status('diskReady');
       // le serveur relais note quel code a servi (empreinte du code, jamais le code lui-même)
       try {
@@ -493,17 +494,51 @@
   });
   $('licForm').addEventListener('submit', (e) => { e.preventDefault(); if (ready && !running && !diskBusy) loadDisk($('licCode').value); });
 
+  // ---------------------------------------------------------------- disquette en .zip, vérification
+  // archive .zip : la page en sort l'image .st (stockée ou compressée « deflate »)
+  async function unzipDisk(buf) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let e = -1;
+    for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+    if (e < 0) return null;
+    const count = dv.getUint16(e + 10, true);
+    let p = dv.getUint32(e + 16, true), best = null;
+    for (let k = 0; k < count && p + 46 <= buf.length; k++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+      const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
+      const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + nl));
+      p += 46 + nl + xl + cl;
+      if (usize < 300000 || usize > 4000000 || (method !== 0 && method !== 8)) continue;
+      const score = (/\.st$/i.test(name) ? 2 : 0) + (/stunt/i.test(name) ? 1 : 0);
+      if (!best || score > best.score) best = { method, csize, lho, score };
+    }
+    if (!best || dv.getUint32(best.lho, true) !== 0x04034b50) return null;
+    const start = best.lho + 30 + dv.getUint16(best.lho + 26, true) + dv.getUint16(best.lho + 28, true);
+    const data = buf.subarray(start, start + best.csize);
+    if (best.method === 0) return new Uint8Array(data);
+    return new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
+  // le jeu vérifie la disquette avant qu'elle soit gardée (version reconnue) : une mauvaise image
+  // n'est jamais enregistrée, la page ne reste pas bloquée dessus
+  function keepDisk(disk) {
+    FS.writeFile(DISK, disk);
+    let ok = 1;
+    try { ok = Module.ccall('scr_check_disk', 'number', ['string'], [DISK]); } catch (e) { console.warn('vérification', e); }
+    if (!ok) { try { FS.unlink(DISK); } catch (e) {} haveDisk = false; save(); status('diskRefused'); return false; }
+    haveDisk = true; save();
+    return true;
+  }
+
   async function useFile(f) {
     if (!f || !ready || running || diskBusy) return;
     diskBusy = true;
     refresh();
     try {
-      const disk = new Uint8Array(await f.arrayBuffer());
-      if (disk.length < 300000) { status('badDisk'); return; }
-      FS.writeFile(DISK, disk);
-      haveDisk = true;
-      save();
-      status('diskReady');
+      let disk = new Uint8Array(await f.arrayBuffer());
+      if (disk.length > 3 && disk[0] === 0x50 && disk[1] === 0x4b) disk = await unzipDisk(disk);   // « PK » : archive .zip
+      if (!disk || disk.length < 300000) { status('badDisk'); return; }
+      if (keepDisk(disk)) status('diskReady');
     } catch (e) {
       console.warn('disk image', e);
       status('fileError');
