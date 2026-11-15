@@ -1,7 +1,8 @@
-## Stunt Car Racer v104
+## Stunt Car Racer v105
 
 **Français**
-- Nouveau en v104 : circuits personnels (première étape de l'éditeur de circuits) : fichier .trk de 8 circuits, chargé comme les circuits TNT (dossier CIRCUITS, ou emplacement « Mes circuits » de la version navigateur ; F7 pour changer), vérifié avant d'y rouler (raccords des pièces, fermeture du circuit). scr_headless --export-trk / --check-trk pour partir des circuits de sa disquette et vérifier un fichier.
+- Nouveau en v105 : éditeur de circuits dans le navigateur (https://popov2026.github.io/stuntcar-racer/play/editor.html) : vue de dessus sur la grille, pièces (forme, orientation, sens, case, profils de hauteur), ajout d'une pièce au bout de la précédente, aperçu 3D, vérification par le moteur du jeu, téléchargement du .trk et essai direct dans le jeu.
+- v104 : circuits personnels (première étape de l'éditeur de circuits) : fichier .trk de 8 circuits, chargé comme les circuits TNT (dossier CIRCUITS, ou emplacement « Mes circuits » de la version navigateur ; F7 pour changer), vérifié avant d'y rouler (raccords des pièces, fermeture du circuit). scr_headless --export-trk / --check-trk pour partir des circuits de sa disquette et vérifier un fichier.
 - v103 : serveur relais : une connexion du jeu ou de la page web fermée sans message (menu quitté, page rechargée) n'est plus comptée comme un robot ni surveillée ; les mots de passe /admin faux sont comptés à part (seule la page /admin est bloquée 1 h, jamais le jeu).
 - v102 : avis des joueurs sur la page web (1 à 5 étoiles, nom, commentaire de 100 caractères) ; chaque avis est validé dans la page /admin du serveur relais avant d'être publié (scr_avis.txt).
 - v101 : le jeu reconnaît les autres copies Atari ST de Stunt Car Racer : programme GAME.PUT, STUNTCAR.PRG, STUNT.PRG ou STUNTCAR.EXE, compressé ByteKiller ou Pack-Ice, ou pas (8 copies différentes testées, toutes jouables et compatibles entre elles en multijoueur).
@@ -38,7 +39,8 @@
 - Jeu et serveur relais en v87 : mettre les deux à jour.
 
 **English**
-- New in v104: custom circuits (first step of the circuit editor): .trk file of 8 circuits, loaded like the TNT circuits (CIRCUITS folder, or "My circuits" slot of the browser version; F7 to switch), checked before racing on it (pieces connecting, circuit closing). scr_headless --export-trk / --check-trk to start from your disk's circuits and check a file.
+- New in v105: circuit editor in the browser (https://popov2026.github.io/stuntcar-racer/play/editor.html): top view on the grid, pieces (shape, orientation, direction, cell, height profiles), adding a piece at the end of the previous one, 3D preview, check by the game engine, .trk download and direct try in the game.
+- v104: custom circuits (first step of the circuit editor): .trk file of 8 circuits, loaded like the TNT circuits (CIRCUITS folder, or "My circuits" slot of the browser version; F7 to switch), checked before racing on it (pieces connecting, circuit closing). scr_headless --export-trk / --check-trk to start from your disk's circuits and check a file.
 - v103: relay server: a game or web page connection closed without a message (menu left, page reloaded) is no longer counted as a bot nor watched; wrong /admin passwords are counted separately (only the /admin page is blocked for 1 h, never the game).
 - v102: players' reviews on the web page (1 to 5 stars, name, 100-character comment); each review is approved in the relay server's /admin page before being published (scr_avis.txt).
 - v101: the game recognises the other Atari ST copies of Stunt Car Racer: GAME.PUT, STUNTCAR.PRG, STUNT.PRG or STUNTCAR.EXE program, ByteKiller or Pack-Ice packed, or not (8 different copies tested, all playable and compatible with each other online).
